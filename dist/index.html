@@ -96,9 +96,12 @@
             e.preventDefault();
           };
         }
+      }, 800);
+
+      setTimeout(() => {
         const loading = document.getElementById("loading");
         if (loading) loading.style.display = "none";
-      }, 800);
+      }, 2000);
     </script>
   </body>
 </html>
