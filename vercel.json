@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "framework": null,
+  "outputDirectory": "dist",
+  "buildCommand": "",
+  "routes": [
+    {
+      "src": "/(.*)\\.wasm",
+      "headers": { "Content-Type": "application/wasm" },
+      "dest": "/$1.wasm"
+    },
+    { "src": "/assets/(.*)", "dest": "/assets/$1" },
+    { "src": "/(.*)", "dest": "/$1" }
+  ]
+}

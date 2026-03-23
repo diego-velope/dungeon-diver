@@ -1,0 +1,62 @@
+---
+description: "HTML5 TV platform companion: Velope PAL core reference. BasePlatform, platform packages, keycodes, player abstraction, shared services. Always copy with tv-platform-html5.mdc."
+globs: velope/**/*.{ts,js,d.ts}
+alwaysApply: false
+---
+
+# Velope core – reference
+
+The **velope** folder contains the typical OTT/TV core used across projects. It was copied from `node_modules` of another project. This reference describes its structure and abstractions so the rule can guide work that touches the core. **The core will eventually be refactored to modern standards; that is out of scope for now**—treat this as documentation of the current design.
+
+## Overview
+
+The core provides:
+
+- **Platform Abstraction Layer (PAL)** – `BasePlatform` and platform-specific implementations (Tizen, webOS, Vizio, Run3TV, Browser).
+- **Platform detection** – Identify which platform the app is running on.
+- **Player abstraction** – HLS player and `Player` / `PlayerInterface` for playback.
+- **Framework integration** – Lightning (ott-framework-lng) bindings and components.
+- **Shared services** – Logger, Store, Analytics, ErrorHandler, TextProvider, ColorService, DRM verification, etc.
+
+## Package layout (under `velope/`)
+
+| Package | Purpose |
+|--------|---------|
+| **@velope/ott-core** | Central core: `BasePlatform`, Store, Logger, Player interface, Analytics, ErrorHandler, DRM helpers, Presenter, DependencyRegistry, TemplateRegistry, services (DateTime, Color, TextProvider, LogStorage). |
+| **ott-platform-detection** | Detects current platform (Browser, X1, Android, FireTV, Tizen, WebOS, Vizio, Run3TV). Use `getPlatform()` to choose which platform implementation to use. |
+| **ott-platform-tizen** | Tizen implementation of `BasePlatform` (keyMapping, deviceType, script injection for WebAPI, etc.). |
+| **ott-platform-webos** | webOS (LG) implementation of `BasePlatform`. |
+| **ott-platform-vizio** | Vizio implementation of `BasePlatform`; uses injected VIZIO library and `VIZIO_LIBRARY_DID_LOAD` event. |
+| **ott-platform-run3tv** | Run3TV (NextGen / ATSC 3.0) implementation of `BasePlatform`; wraps Run3 TV Framework RPC (A344 spec). Keycode handling here is platform-specific and should stay in the PAL. |
+| **ott-platform-browser** | Browser/dev implementation of `BasePlatform`. |
+| **ott-players-hls** | HLS player (e.g. HLS.js–based); used for HTML5 playback. |
+| **ott-framework-lng** | Lightning-specific integration: depends on ott-core and ott-players-hls, uses Lightning SDK and Lightning UI components (e.g. Keyboard). |
+
+## PAL: BasePlatform and KeyMapping
+
+- **BasePlatform** (in ott-core) is an abstract class. Each platform package exports a class that extends it (e.g. `Tizen extends BasePlatform`, `WebOS extends BasePlatform`).
+- **KeyMapping** – Maps numeric keycodes to logical keys: `Left`, `Right`, `Up`, `Down`, `Back`, `MediaPlay`, `MediaPause`, `MediaPlayPause`, `MediaFastForward`, `MediaRewind`, `MediaTrackNext`, `MediaTrackPrevious`, `Exit`. Each platform implements `get keyMapping(): KeyMapping` because keycodes differ by device (e.g. Back and Enter vary by vendor).
+- **DeviceType** – Union of: `'browser' | 'X1' | 'androidtv' | 'firetv' | 'tizen' | 'webos' | 'vizio' | 'nextgen' | 'hisense' | 'ADTH' | 'zinwell' | 'sony'`.
+- **BasePlatform** also defines: `deviceType`, `deviceCategory`, `model`, `manufacturer`, `osName`, `osVersion`, `screenWidth`/`screenHeight`, `bitrateRange`, `mute`/`unmute`, `getHDMIConnectedStatus`, `getCloseCaptioningEnabled`, `getTTSStatus`, `announce` (TTS), `dismissLoadingScreen`, `shutdown`, `_injectScript`, and related lifecycle/capability APIs.
+
+## Platform script injection
+
+Tizen, webOS, and Vizio require injecting vendor scripts (e.g. WebAPI, webOS lib, VIZIO companion lib). Platforms use `BasePlatform._injectScript(urlPath)`. See each platform README for the scripts and events (e.g. `VIZIO_LIBRARY_DID_LOAD`).
+
+## Player and playback
+
+- **PlayerInterface** (ott-core) – Abstract interface: `open`, `close`, `play`, `pause`, `seek`, `mute`/`unmute`, `registerEventListeners`, `handleEvent`, `renderCC`, and properties like `currentTime`, `duration`, `ccEnabled`, etc.
+- **ott-players-hls** – HLS player implementation used on HTML5 platforms.
+- **BitrateRange**, **PlaybackConfig**, **PlayerEvent** – Types in ott-core for playback configuration and events.
+
+## Other ott-core exports
+
+- **Store**, **Logger**, **Analytics** (including MParticle), **ErrorHandler**, **Profiling**, **BasePresenter**, **DependencyRegistry**, **TemplateRegistry**, **ColorService**, **TextProvider**, **getDRMKeySystem** / **requestMediaKeySystem**, **debounce**, **getLocalIPAddress**, **CoreAPI**, **DebugProxy**, **ConsoleLogStorage**, **DateTimeService**, and types for **LogStorage**, **AnalyticsEvent**, **CaptionStyle**, **WebBrowser**, and various callbacks (CC, HDMI, TTS, Network, Visibility).
+
+## Guidance when working with the core
+
+- **Keycodes and Back/Enter** – Always implement or extend key handling in the PAL (platform package). Do not hardcode keycodes in app or framework code; use `keyMapping` from the current platform instance.
+- **NextGen / Run3TV** – Keycode handling for the Run3 TV Framework is platform-specific; keep it in the Run3TV platform implementation and document in the PAL.
+- **New platforms** – Add a new `ott-platform-<name>` package that extends `BasePlatform` and implements `keyMapping`, `deviceType`, and other abstract members; register the platform in detection if needed.
+- **Animation / navigation** – The rule’s tenets call for an animation service abstraction and an efficient navigation manager; the core does not yet mandate a single implementation—integrate with BasePlatform and framework lifecycle as appropriate.
+- **Refactor note** – The core is not yet modernized (e.g. module format, TypeScript strictness, tree-shaking). When refactoring is in scope, align with the rule’s universal tenets (ES5 build for TV, PAL for keycodes and capabilities, single source of truth per platform).

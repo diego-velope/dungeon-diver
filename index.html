@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dungeon Diver - TV Browser Game</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            width: 1280px;
+            height: 720px;
+            max-width: 100vw;
+            max-height: 100vh;
+            aspect-ratio: 16/9;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #4a90d9;
+            font-family: 'Orbitron', system-ui, sans-serif;
+            font-size: 22px;
+            font-weight: 500;
+            letter-spacing: 0.06em;
+            text-align: center;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #3a4a5a;
+            border-top-color: #4a90d9;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        #controls-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #7a8a9a;
+            font-family: 'Orbitron', system-ui, sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+            text-align: center;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="glcanvas" tabindex="1" width="1280" height="720"></canvas>
+        <div id="loading">
+            <div class="spinner"></div>
+            <div>Loading Dungeon Diver...</div>
+        </div>
+        <div id="controls-hint">D-Pad to move • OK/Enter to select • Back/ESC for menu</div>
+    </div>
+    <script src="https://not-fl3.github.io/miniquad-samples/mq_js_bundle.js"></script>
+    <script>
+        load("dungeon-diver.wasm");
+
+        // Known miniquad 0.4.x mouse RefCell panic.
+        setTimeout(function () {
+          var canvas = document.getElementById("glcanvas");
+          if (canvas) {
+            canvas.onmousemove = null;
+            canvas.onmousedown = null;
+            canvas.onmouseup = null;
+            canvas.onmouseenter = null;
+            canvas.onmouseleave = null;
+            canvas.onfocus = null;
+            canvas.oncontextmenu = function (e) {
+              e.preventDefault();
+            };
+          }
+        }, 800);
+      </script>
+    <script>
+        // Hide loading screen when game starts
+        setTimeout(() => {
+            const loading = document.getElementById('loading');
+            if (loading) loading.style.display = 'none';
+        }, 2000);
+    </script>
+</body>
+</html>

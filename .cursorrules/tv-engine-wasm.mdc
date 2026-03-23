@@ -1,0 +1,103 @@
+---
+description: Generic WASM engine rules for TV. Memory model, threading (SharedArrayBuffer/COOP/COEP), texture compression, JS integration, build optimization. For Rust, C++, AssemblyScript, or other WASM toolchains.
+globs: **/*.{wasm,wat,rs,cpp,c,ts,js,toml}
+alwaysApply: false
+---
+
+# WASM Engine — TV Rules (Generic)
+
+Rules for shipping generic WebAssembly (non-Unity) alongside an HTML5 TV app. Covers Rust/wasm-pack, Emscripten C/C++, AssemblyScript, or any toolchain that outputs `.wasm`. For Unity-specific WASM, see `tv-engine-unity.mdc`.
+
+Requires `tv-platform-html5.mdc` and one of the `tv-framework-*.mdc` files alongside this file.
+
+---
+
+## Memory model
+
+- WASM linear memory **grows but never shrinks**. Once the heap expands (e.g. during a loading spike), that memory is permanently allocated from the browser's perspective.
+- **Design around peak memory, not average.** The worst-case allocation moment is the permanent footprint.
+- **Unload before loading.** When transitioning between heavy states (e.g. levels, large datasets), free/release the old data first, yield a frame, then allocate the new data. Never overlap.
+- Set a **maximum memory size** if your toolchain supports it. Better to fail predictably in testing than silently consume all TV memory.
+
+---
+
+## Threading (SharedArrayBuffer)
+
+WASM supports multi-threading via `SharedArrayBuffer` + Web Workers. This is available on TV under specific conditions.
+
+### Requirements
+
+1. **Server headers** on the main HTML document:
+   - `Cross-Origin-Opener-Policy: same-origin`
+   - `Cross-Origin-Embedder-Policy: require-corp` (or `credentialless` on Chrome 96+)
+2. **Chrome 92+** required for `SharedArrayBuffer` with cross-origin isolation. TVs manufactured before ~2021 may not support it.
+3. Your WASM module must be compiled with threading support (e.g. `wasm32-unknown-unknown` + `atomics` in Rust, `-pthread` in Emscripten).
+
+### `require-corp` complication
+
+Once `COEP: require-corp` is set, every cross-origin resource must have CORS or `Cross-Origin-Resource-Policy` headers. This breaks third-party scripts (analytics, ads) that don't serve CORS headers.
+
+**Mitigations:**
+- Self-contained app (all assets on your CDN): no issue.
+- App with third-party SDKs: audit all resources, or use `credentialless` (Chrome 96+).
+- Use `Cross-Origin-Embedder-Policy-Report-Only` during development to discover breakage.
+
+### Decision tree
+
+| Scenario | Use threading? |
+|----------|---------------|
+| Your CDN, no third-party cross-origin resources, Chrome 92+ only | **Yes.** Set headers. |
+| Third-party SDKs present | **Maybe.** Audit CORS/CORP. Test `credentialless`. |
+| Must support Chrome < 92 | **No.** Architect for single-threaded. Enable threading as enhancement with graceful fallback. |
+
+---
+
+## Texture compression (WebGL)
+
+If your WASM module renders via WebGL (e.g. a game engine, visualization):
+
+| Format | TV support | Recommendation |
+|--------|-----------|----------------|
+| **ETC2** | Most ARM GPUs (OpenGL ES 3.0+) | **Good default.** Tizen, webOS, Android TV. |
+| **ASTC** | Newer ARM GPUs (OpenGL ES 3.2+) | Best quality/size. Not on oldest TVs. |
+| **DXT** (S3TC) | Desktop GPUs only | **Avoid.** Software fallback on TV = slow + 2x memory. |
+
+---
+
+## Integration with the JS app
+
+The WASM module runs inside the same WebView as the HTML5 TV app. Communication patterns:
+
+- **JS glue / bindings:** Emscripten generates JS glue. Rust/wasm-pack generates JS wrapper modules. Call WASM functions from JS and vice versa.
+- **`postMessage`** for worker-based WASM (WASM running in a Web Worker communicates with the main thread via message passing).
+- **Shared memory** (`SharedArrayBuffer`) for zero-copy data exchange between JS and WASM threads — requires COOP/COEP headers.
+- **Keep the JS app responsible for DOM, input, and focus.** WASM handles compute-heavy work (physics, pathfinding, encoding, simulation). The HTML5 framework (React/Solid/Lightning) owns the UI layer.
+
+---
+
+## Build optimization
+
+- **Brotli compression** for `.wasm` files. Requires HTTPS (all TV CDNs should be HTTPS). Server must handle `Content-Encoding: br`.
+- **Strip debug info** and unused exports for release builds.
+- **Size targets:** Keep the initial WASM module under **3-5 MB compressed** for fast TV load. Lazy-load additional modules as needed.
+- **wasm-opt** (from Binaryen) for post-build optimization — reduces size and improves runtime.
+- **Lazy instantiation:** Do not block first paint on WASM compilation. Load and compile the WASM module **after** the splash is visible, or use `WebAssembly.compileStreaming()` for progressive compilation.
+
+---
+
+## No filesystem
+
+WASM has no direct filesystem access in the browser. Use:
+- **`localStorage` / `sessionStorage`** for small key-value data (via JS glue).
+- **IndexedDB** for structured or larger data (via JS glue or Emscripten's virtual filesystem mapped to IndexedDB).
+- **HTTP fetch** for asset loading.
+
+---
+
+## Agent checklist (WASM)
+
+1. Is the WASM module loaded **after** first paint? Never block the splash.
+2. Peak memory profiled on device? WASM heap + JS heap + GPU < device limit.
+3. Threading decision made? Headers set if yes; single-threaded fallback tested if maybe.
+4. Texture format tested on target TV GPU? No DXT software fallback.
+5. `.wasm` size under 5 MB compressed? Lazy-load additional modules.

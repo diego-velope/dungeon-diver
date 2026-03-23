@@ -1,0 +1,88 @@
+---
+description: Lightning 3 / SolidTV TV rules. Build toolchain, useFocusManager, primitives, canvas init, Lightning layout and scaling, no Blits.
+globs: **/*.{ts,tsx,js,jsx}
+alwaysApply: false
+---
+
+# Lightning 3 / SolidTV — TV Framework Rules
+
+Lightning 3 renderer via SolidTV (Solid-based wrapper). Requires `tv-platform-html5.mdc` alongside this file. **We do not use Blits** — never reference Blits APIs, patterns, or syntax.
+
+## Build toolchain
+
+| Bundler | Plugins | Notes |
+|---------|---------|-------|
+| **Vite** | `vite-plugin-solid`, `@vitejs/plugin-legacy` for ES5, `resolve.dedupe` for `solid-js` + `@lightningtv/solid` + `@lightningtv/solid/primitives` | Lightning 3 starter template uses Vite. ~12 KB gzipped runtime. Rolldown in Vite 8+. |
+
+Clone starter: `npx degit lightning-tv/solid-starter-template my-app`
+
+---
+
+## Focus manager (`@lightningtv/solid`)
+
+SolidTV includes a built-in focus manager via `useFocusManager` (from `@lightningtv/solid/primitives`). Call once at app root.
+
+- **`useFocusManager(keyMap?, keyHoldOptions?)`** — Attaches `keydown` / `keyup` on `document`. Maps physical keys to logical events (`Left`, `Right`, `Up`, `Down`, `Enter`, `Back`, `Escape`, `Space`). Custom key maps via `userKeyMap`. Key hold with configurable threshold.
+- **`activeElement`** — Solid signal tracking the focused `ElementNode`. Set via `setActiveElement(elm)` or `autofocus` prop.
+- **Focus path** — Walks from focused node up through parents, calling `onFocus` / `onBlur` / `onFocusChanged`. Ancestor-aware (e.g. `Row` knows when a child gains focus).
+- **Key propagation** — Capture → bubble along focus path. `onLeft`, `onRight`, `onUp`, `onDown`, `onEnter` return `true` to consume. `onCaptureLeft`, `onCaptureKey` for capture phase.
+- **Throttling** — `Config.throttleInput` (global) and per-element `throttleInput`.
+- **`Row` and `Column`** — Handle directional navigation and child selection automatically. `Row` responds to Left/Right; `Column` to Up/Down. Both manage `selected` index and call `scrollRow` / `scrollColumn`.
+- **Scrolling modes** — `scroll` prop: `'always'` | `'none'` | `'edge'` | `'auto'` | `'center'` | `'bounded'`. Default transitions: 180ms horizontal, 300ms vertical.
+
+### Additional primitives
+
+`Virtual` / `VirtualGrid` (virtualized rendering), `Lazy` / `LazyImport` (deferred loading), `KeepAlive` (preserve state), `createFocusStack`, `useHold` (long-press), `withScrolling` (scroll math), `FPSCounter`, `Marquee`, `FadeInOut`, `Preserve`, `Suspense`, `Image`, `Visible`, `borderBox`, `useMouse`, `portal`, `router`, `createTag`, `createSpriteMap`, `createBlurredImage`.
+
+Source: [github.com/lightning-tv/solid](https://github.com/lightning-tv/solid)
+
+---
+
+## SolidTV + Lightning 3 init sequence
+
+1. **`index.html`** paints splash (inline HTML/CSS) and provides a **`<canvas>`** for the WebGL renderer. Pre-creating canvas in HTML may reduce init time — test on device.
+2. **Tiny bootstrap** waits for first paint, then injects app bundle script.
+3. **PAL / platform detection** runs early — before `render()` — because PAL is needed for API calls, keycodes, device-tier.
+4. **SolidTV `render()`** mounts the Solid component tree, binds to the canvas, initializes Lightning 3 renderer + WebGL context.
+5. **Splash-to-app handoff:** Canvas sits **under** the HTML splash (`z-index`). Splash hidden **only once all first-screen Lightning nodes are visible**. No blank frame.
+6. **Focus** moved to first interactive element via `autofocus` or `setActiveElement`.
+
+---
+
+## Lightning layout
+
+- Lightning does **not** use CSS. All positioning via `x`, `y`, `width`, `height` properties on nodes — **absolute positioning by default**.
+- Lightning's built-in `display: "flex"` is a lightweight engine in the renderer, **not** browser CSS flex. Acceptable for simple row/column containers.
+- **Agent rule:** When generating Lightning/SolidTV UI code, use Lightning node properties (`x`, `y`, `w`, `h`, `color`, `borderRadius`, etc.) — **never** CSS classes, `style={{}}`, or DOM elements. See [AI Coding Guidelines](https://github.com/lightning-tv/solid/blob/main/docs/AI_CODING_GUIDELINES.md).
+
+### Lightning styling rules
+
+- Colors: hex strings (`"#ff0000ff"`). No named colors.
+- No `background` — use `color`.
+- Borders: `border={{ width: 1, color: "#000000ff" }}`. No CSS strings.
+- `borderRadius`: number or array `[tl, tr, br, bl]`.
+- No CSS classes, no `style={{}}`, no `className`.
+- Padding: single `padding` number only (no directional padding).
+- Margins: `marginTop`, `marginBottom`, `marginLeft`, `marginRight`.
+
+---
+
+## Runtime scaling (Lightning)
+
+- Design at **1920×1080**. Set **Lightning's scale property** at runtime to adapt to device resolution (e.g. 1280×720).
+- Author all layout values as whole numbers in 1920×1080 space. Lightning handles conversion.
+- No `px()` utility needed — Lightning scaling does it at the renderer level.
+
+---
+
+## Performance (Lightning-specific)
+
+- Lightning targets **WebGL on constrained TV hardware** (10-100x slower than phones).
+- **Lazy/virtualized lists:** Only create/mount nodes for items on or near screen. Use `<For>`, `<Show>`, signals, `Virtual` / `VirtualGrid` to control which nodes exist. Target 8-15 active elements, not 100+.
+- **Minimal first scene.** Defer heavy textures and non-critical components after first frame.
+- **Batch model updates.** Avoid synchronous large transforms in the same tick as input handling.
+- **Component pooling:** Recycle Lightning nodes by updating properties (text, texture src, color) rather than removing and re-creating `<View>` / `<Text>`.
+
+### Texture memory (experimental)
+
+Lightning 3 manages texture cache internally. Manual `texture.free()` vs renderer eviction is not settled. **Agent rule:** Prompt developer to test both when near memory ceiling.

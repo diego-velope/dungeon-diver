@@ -1,0 +1,93 @@
+---
+description: Roku BrightScript/SceneGraph platform rules. Threads, Tasks, render thread, init order, lifecycle, splash, layout, performance, OEM architecture.
+globs: **/*.{brs,xml}
+alwaysApply: false
+---
+
+# Roku — TV Platform Rules
+
+Roku uses BrightScript and SceneGraph. Not HTML5; separate codebase. **Launch and UI performance** are the top priority — Roku **tracks** channel launch; optimize startup and fire `AppLaunchComplete` / dialog beacons correctly. Blocking the render thread **> ~10 s** can **terminate** the channel.
+
+## Threads
+
+### Main BrightScript thread
+Startup, channel launch, work before SceneGraph scene. Keep short.
+
+### SceneGraph render thread
+UI rendering, input, `init()`, `onKeyEvent`, field observers. **Must stay responsive.** No blocking or long-running work (HTTP, I/O, heavy parsing). > 10s = channel terminated.
+
+### Task node threads
+Off-render-thread work: network, I/O, parsing. **Limits:** 100 max (warn at 50). Reuse or destroy when done.
+
+### Communication
+- **Rendezvous (avoid):** Task reading/writing render-thread objects blocks both threads. Use `logrendezvous` to detect.
+- **Preferred: roRenderThreadQueue** — `PostMessage()` (data moved, not copied) + `AddMessageHandler()`. No rendezvous.
+- **Roku OS 15+:** `MoveIntoField()` for zero-copy transfer.
+
+| Work type | Thread | Notes |
+|-----------|--------|-------|
+| UI, focus, input | Render | Keep fast, no blocking |
+| HTTP, I/O, parsing | Task | `control = "RUN"`, return via roRenderThreadQueue |
+| Large data → UI | roRenderThreadQueue / MoveIntoField | Avoid rendezvous |
+
+---
+
+## SceneGraph init order
+
+- **Children init before parent's `init()`**. Don't assume parent completed first.
+- **Field observers don't fire for initial values** set before registration. Call logic explicitly after `observeField`.
+- **Avoid heavy work from XML.** Prefer `init()` + Task.
+- **Scene disposal:** Remove/dereference nodes, cancel Tasks, clear observers when replacing scenes or exiting deep stacks (SGDEX patterns). Roku is memory-sensitive.
+
+---
+
+## Performance
+
+- **Measured launch:** Fire `AppLaunchComplete` when home UI is ready. Use `AppDialogInitiate` / `AppDialogComplete` for blocking dialogs so metrics stay fair.
+- **Never block first paint on network.** Splash + Task pattern.
+- **Defer assets, cache, fewer startup requests.** Slow first load often ties to too much work at launch.
+- **RAM:** Minimize concurrent Tasks; release nodes when done. Low-end devices under memory pressure show worse video and UI.
+- **Component pooling:** Reuse SceneGraph nodes in MarkupGrid / custom lists. Avoid `createObject` + `removeChild` churn on render thread.
+- **Sequencing:** Never parse large JSON/XML on render thread. Use Task. If one Task runs too long, split into stages with roRenderThreadQueue partial updates.
+
+---
+
+## OEM architecture
+
+**Sources:** Roku Developer docs, rokudev/scenegraph-master-sample, community.
+
+- **Init order:** Children → interface fields → `init()`. Observers don't run for initial values.
+- **Architecture:** Scene + views (SGDEX: Grid, Details, Video) or custom components. ComponentController / view stack. `ui_resolutions` in manifest.
+- **Lifecycle:** Match `AppLaunchComplete` / dialog beacons. Dispose scenes and release nodes when leaving deep stacks.
+
+---
+
+## First paint
+
+**(1)** Show something immediately, **(2)** first interactive screen fast.
+
+- **Minimal first scene:** Splash (Poster/Bitmap) + BusySpinner, no blocking work in `init()`. Parse large JSON/XML in Task; sequence in stages if needed.
+- **Defer** registry, catalog, config, DRM to Task nodes after splash is visible.
+- **Hide splash only after** main channel UI is built and visible (or clear empty/error state shown). Use field/visibility toggle — no blank frame.
+- **Parallelize** independent Tasks after first paint. Serialize only for dependencies.
+
+---
+
+## Layout
+
+- Author at **1920×1080** logical grid. SceneGraph `translation`, `width`, `height` with **integer pixel values** for crisp rendering.
+- **Do not round in hot paths** per frame (onKeyEvent, animation callbacks). Compute positions once at model-build time, apply `Int()` / floor / ceil before setting node fields.
+- **Animation deltas:** Allow floats during motion for smoothness; snap to int at rest.
+
+---
+
+## Lifecycle
+
+- App start, focus gain/loss, suspend/resume, termination.
+- Stop and dereference Task nodes on suspend. Keep thread count under limit.
+- **Agent guidance:** Follow init order and disposal patterns. Fire beacons correctly.
+
+## Tooling
+
+- Roku CLI for build, package, sideload.
+- `logrendezvous` for cross-thread access debugging.

@@ -1,0 +1,167 @@
+---
+description: HTML5 TV platform rules shared across all JS frameworks (React, Solid, Lightning). Workers, first paint, third-party SDKs, positioning, ES compatibility, OEM details, lifecycle.
+globs: **/*.{ts,tsx,js,jsx,html,css,json}
+alwaysApply: false
+---
+
+# HTML5 TV Platform
+
+Rules for all HTML5-based TV apps regardless of JS framework. Copy this file (plus its companions `tv-platform-html5-keycodes.mdc` and `tv-platform-html5-velope.mdc`) into any HTML5 TV project. Framework-specific rules are in separate `tv-framework-*.mdc` files.
+
+## Platforms in scope
+
+Samsung (Tizen), LG (webOS), Vizio, Comcast X1, Xumo TV, Sky Glass, Fire TV (Android + Vega), Android TV / Google TV, NextGen TVs (ATSC 3.0).
+
+## Tech stack
+
+- JS/HTML; WASM where supported (Chrome 91+).
+- **One build per platform, runtime PAL.** Ship one HTML5 build for all OEM brands. All platform-specific code resolved at runtime via the PAL. Exception: possible LG-specific build for Magic Mouse.
+- **ES target:** Default **ES5**; also build and test **ES2017** in parallel. Configurable via env var `ES_TARGET=es5` | `es2017`. Use "tv-legacy" browserslist for ES5 (Chrome 83 min), "tv-modern" for ES2017 (Chrome 80+). Validate both on real devices.
+
+---
+
+## Web Workers (HTML5)
+
+Use workers **only where they measurably help** and **never block first paint** on worker startup.
+
+- **Agent rule:** Before adding any worker code, the agent **must explicitly call it out** and **wait for user approval**.
+- **Dual path:** Every worker feature **must** have a main-thread JS fallback. Same API for callers; routing by build flag or feature detection.
+- **Per-worker build flags:** `USE_PARSER_WORKER`, `USE_ANALYTICS_WORKER`, `USE_SERVICE_WORKER`, etc. Each flag independent. Build excludes worker code when flag is off.
+- **Chrome baseline:** Dedicated workers stable Chrome 4+. Module workers Chrome 80+. Service Workers unreliable on TV. SharedWorker avoid. WASM threads (SharedArrayBuffer) often unavailable (COOP/COEP missing).
+- **Do not** move first-frame or input-path code to workers; use for background CPU after shell is visible.
+
+---
+
+## First paint and loading
+
+**Goal:** (1) Show UI immediately, (2) app interactive ASAP.
+
+- **Splash in `index.html`** — inline HTML + critical CSS. No JS dependency for first paint. Stable `id` (e.g. `#app-splash`).
+- **Defer app JS** until splash is painted. Tiny inline bootstrap waits for first paint (`rAF` twice or `rAF` + `rIC`), then dynamically injects app entry script.
+- **Hide splash only after** main bundle initialized AND first interactive UI fully rendered. Use `rAF` / framework hook. Never hide before UI is visible.
+- **Phased loading:** Shell → PAL init → core app → lazy features (players, heavy routes).
+- **Code-split** by route or feature so first screen loads minimal JS.
+- **Resource hints** after shell is visible: `preload`, `modulepreload`, `prefetch`, `preconnect`, `dns-prefetch`.
+
+---
+
+## Third-party SDKs (players, analytics, consent, ads)
+
+- **Do not load** until after initial UI is interactive. Single orchestrator module owns load order, timeouts, failure handling.
+- **Event cache + replay:** Tiny bootstrap exposes `recordPreSdkEvent(vendor, type, payload)` → in-memory queue. On SDK load, drain queue in timestamp order, then forward live events.
+- **Serialize initialization** (one at a time, staggered via `rIC` / `setTimeout`). Order: consent → analytics → players.
+
+---
+
+## Positioning: absolute + pixels, no flexbox
+
+Use **`position: absolute`** with **`top`, `left`, `width`, `height` in whole pixels** for all layout.
+
+**Do not use `display: flex`, `display: grid`, CSS columns, `float`.** These trigger layout computation on every reflow — measurably slower on TV. The cost compounds with nesting.
+
+- Carousel rows: position absolutely, scroll via `transform: translateX()`.
+- **Agent rule:** Default to `position: absolute` with pixel values. Do not emit flex/grid unless explicitly requested.
+
+---
+
+## Sequencing heavy work (HTML5-specific patterns)
+
+- Single facade API for JSON loading (batch/streaming/worker transparent to callers). Toggle via build flags + query params (`?jsonStrategy=streaming`).
+- Chunked main-thread processing: slice records, yield via `setTimeout(0)` / `rAF` / `rIC` between slices.
+- Code-split + dynamic `import()` for non-critical chunks after first screen.
+
+---
+
+## Component pooling and recycling
+
+**Instantiation is expensive on TV.** Default: pool and recycle rather than destroy + recreate. Rewrite props/data on recycled instances. Pool sizing: 2-4 off-screen instances per direction.
+
+### Texture memory management (experimental)
+
+Whether to manually free textures vs relying on renderer eviction is not settled. **Agent rule:** Prompt developer to test both approaches when near memory ceiling.
+
+## Carousel animation and scrolling
+
+- **Always animate the parent container**, not individual items.
+- **Focus ring must visit every item** during fast key presses — no skipping. Row scroll must be smooth with no micro-pauses.
+- **Adaptive animation duration:** Shorten as keypress frequency increases. Start with queue-based approach. **Agent rule:** Ask which approach before implementing.
+- **Image placeholders:** Optional, toggleable via QP (`?placeholders=on`) or build flag. Prefetch 2 items ahead.
+
+## Memory budget tiers
+
+| Tier | JS heap | Texture memory | When |
+|------|---------|---------------|------|
+| **Low-end** | < 160 MB | < 100 MB | Older Tizen, webOS 4.x, budget Roku, low-RAM Fire TV. Via build flag `DEVICE_TIER=low` or QP `?tier=low`. |
+| **High-end (default)** | < 200 MB | < 120 MB | Modern Tizen 6+, webOS 6+, mid-high Roku, Fire TV Cube, Apple TV. |
+
+Low-tier mode: disable/simplify animations, reduce concurrent image loads, limit pool buffer sizes. PAL exposes `getDeviceTier(): 'low' | 'high'`.
+
+---
+
+## Session lifecycle: player exit and browse UI readiness
+
+- Browse/search UI **must be ready instantly** on player exit — no loading delay or blank frame.
+- Keep component trees alive during playback. Active UI (progress bars) may pause updates during playback but must refresh before redisplay.
+- Player teardown: release resources (video, DRM, buffers) promptly on exit.
+
+---
+
+## Lifecycle (HTML5)
+
+### Event matrix
+
+| Signal | Generic | Samsung Tizen | LG webOS |
+|--------|---------|--------------|----------|
+| App shown | `visibilitychange` → `visible` | Same; align with Tizen Application lifecycle | `webOSLaunch` (cold), `webOSRelaunch` (warm); set `handlesRelaunch` in `appinfo.json` |
+| App hidden | `visibilitychange` → `hidden`; `pagehide` | Test power cycle + Home | Map Suspended state; release audio |
+| Teardown | `pagehide`; avoid `beforeunload` | Same | Same |
+
+**Baseline:** `visibilitychange` + `pagehide`. On webOS add `webOSLaunch`/`webOSRelaunch`. On Tizen re-test suspend/resume on device.
+
+### Cleanup on hidden/suspend
+
+1. Pause video. 2. Clear/throttle timers; cancel fetches. 3. Stop animations. 4. Flush analytics queues.
+
+### Resume
+
+Restore focus, refresh stale tokens, handle DRM re-auth.
+
+---
+
+## Platform-specific OEM details
+
+### Samsung Tizen
+- Tizen Studio / CLI; `sdb`; VS Code extension.
+- `config.xml`: app id, privileges, WARP.
+- Validate suspend/resume on real hardware.
+
+### LG webOS
+- `ares-*` CLI; VS Code extension.
+- `appinfo.json`: `handlesRelaunch`.
+- Magic Mouse: D-pad first; pointer as LG-only enhancement.
+
+### Vizio / Hisense
+- Vendor-specific APIs. Companion library injection (`VIZIO_LIBRARY_DID_LOAD`).
+
+### Fire TV
+- Android-based: System WebView, `adb`.
+- Vega-based: Chromium v132, React Native for Vega shell, `manifest.toml`, Vega Studio VS Code extension.
+
+### Android TV / Google TV
+- Sony: Chrome 83 ES6 issues. Hisense: Google TV. STBs: vary widely.
+
+### NextGen TVs (ATSC 3.0)
+- Run3 TV Framework + A344 RPC. Dynamic keycodes via `window.fmw`. Keep all keycode handling in PAL.
+
+### Hosted app model
+All OEM packages (Samsung `.wgt`, LG `.ipk`, X1, Xumo, Sky) point to CDN-hosted URL. App code is not bundled inside.
+
+---
+
+## Agent checklist
+
+1. Does it increase initial download/parse/execute time? Lazy-load after first screen?
+2. Does it run on the hot path during launch or scroll? Offload or chunk.
+3. Does it allocate large structures up front? Defer or stream.
+4. Measured on weakest device? If not, flag as risk.
+5. Would sync work hang the UI? Sequence, chunk, or offload.

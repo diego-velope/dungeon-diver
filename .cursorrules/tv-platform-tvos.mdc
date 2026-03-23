@@ -1,0 +1,90 @@
+---
+description: tvOS Swift/SwiftUI platform rules. HIG, Top Shelf, lifecycle, splash, layout, storage, performance, OEM architecture.
+globs: **/*.{swift,storyboard}
+alwaysApply: false
+---
+
+# tvOS — TV Platform Rules
+
+Apple TV (tvOS) uses Swift and optionally TVML. Not HTML5; separate codebase. **Cold launch** must stay lean — async all I/O, sequence heavy init so the UI never freezes. **Simulator ≠ device** — always profile on real Apple TV hardware.
+
+## Human Interface Guidelines (10-foot UX)
+
+- **Distance:** ~10 feet; large legible type, high contrast, clear hierarchy.
+- **Focus engine:** One focused element at a time. Parallax on focused icons. Siri Remote D-pad/touch moves focus predictably. No tiny targets.
+- **Motion:** Short, purposeful animations. No gratuitous motion that delays key feedback.
+- **Official:** Apple tvOS HIG and App Programming Guide for tvOS.
+
+## Top Shelf and discovery
+
+- Wide banner above app row: static and dynamic content for hero art and deep links (continue watching).
+- Requires associated domains / valid JSON payloads per Apple's format. Plan assets and CDN early.
+- Store-facing: refresh when catalog updates.
+
+## Storage and on-demand resources
+
+- Apple TV has **limited persistent storage**. Large caches may be purged. Use **On-Demand Resources (ODR)** or streaming. Don't assume local caches survive.
+
+---
+
+## Performance
+
+- **Reduce launch time.** Distinguish cold vs warm launch. Defer non-essential init.
+- **Instruments + Organizer** for launch metrics.
+- **ODR** shrinks initial install / first launch payload.
+- **Simulator ≠ device** for GPU and thermal behavior. Profile on device.
+- **Main thread** must stay responsive. Async all I/O and heavy decode.
+- **Sequencing:** Decode/parse large JSON on background queue or `Task.detached`, not main actor. Streaming or incremental decode for very large payloads.
+- **Component pooling:** Reuse UIKit/SwiftUI views. Instantiation is expensive on TV hardware.
+
+---
+
+## OEM architecture
+
+**Sources:** Apple — App Programming Guide for tvOS, HIG "Designing for tvOS", launch-time docs.
+
+- **UIKit / SwiftUI / TVUIKit.** Top Shelf for featured content. Client-server patterns for catalog apps.
+- **HIG:** 10-foot, obvious focus (parallax, elevation), horizontal grids, Siri Remote (Menu, Play/Pause). No non-standard gestures except games.
+- **Lifecycle:** Scenes; limited local storage — prefer network + cache discipline. Cold launch optimization, ODR for large assets.
+- **Dark mode** and system appearance — harmonize chrome with tvOS.
+
+---
+
+## First paint
+
+**(1)** Show UI immediately, **(2)** first interactive screen ASAP.
+
+### Swift / UIKit
+- **Launch Screen** (storyboard or asset) for instant branding. Root VC with lightweight loading state (splash + `UIActivityIndicatorView` or SwiftUI `ProgressView`).
+- **Do not block** `application(_:didFinishLaunchingWithOptions:)` with sync network, large disk reads, or heavy parsing. Use `Task {}` / `DispatchQueue.global()` / async-await. Sequence or chunk very large JSON.
+- **Dismiss splash only** when first real screen is laid out and visible.
+
+### SwiftUI
+- Root view: splash or progress first. `.task` / `.onAppear` for async data. Swap to content when ready. Small initial view tree.
+
+### TVML (if used)
+- Loading template immediately. Fetch/parse in background. Push/replace when ready.
+
+### Startup efficiency
+- Prefetch images and config **after** loading UI is on screen. Prioritize time-to-interactive.
+
+---
+
+## Layout
+
+- tvOS runs at fixed point scales (@1x / @2x for 1080p / 4K). Use **integral points** for frames, spacing, grid cells.
+- Define layout constants as **whole numbers**. Round once at layout time, not per frame.
+- Auto Layout / SwiftUI with integer spacing. Fractional values during animation OK; snap to int at rest.
+
+---
+
+## Lifecycle
+
+- App launch, foreground/background, termination. **Restore focus** after returning from background (HIG: user should not lose context).
+- **Scene lifecycle:** `sceneWillEnterForeground` / `sceneDidEnterBackground` — pause playback, save state, refresh stale data.
+- **Agent guidance:** Align focus and layout with HIG. Optimize cold launch. Use ODR for large assets.
+
+## Tooling
+
+- Xcode; Apple TV simulator and device debugging.
+- Signing and provisioning for App Store and TestFlight.

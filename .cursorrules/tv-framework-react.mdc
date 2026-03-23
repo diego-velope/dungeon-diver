@@ -1,0 +1,88 @@
+---
+description: React-specific TV rules. Build toolchain, focus manager requirement, useLayoutEffect timing, GPU CSS, runtime scale utility, Norigin advisory.
+globs: **/*.{ts,tsx,js,jsx}
+alwaysApply: false
+---
+
+# React — TV Framework Rules
+
+React-specific rules for HTML5 TV apps. Requires `tv-platform-html5.mdc` (shared HTML5 platform rules) alongside this file.
+
+## Build toolchain
+
+| Bundler | Plugins | Notes |
+|---------|---------|-------|
+| **Vite** (default) | `@vitejs/plugin-react` (or `@vitejs/plugin-react-swc` for faster transforms), `@vitejs/plugin-legacy` for ES5 | Vite is the default for new React projects. CRA is deprecated. 5-6x faster than Webpack. |
+| **Webpack 5** (legacy only) | `babel-loader` or `swc-loader`, `@babel/preset-env` targeting ES5 | Only for migrating existing Webpack codebases or Module Federation. Do **not** start new projects on Webpack. |
+
+---
+
+## Focus manager (required — first implementation task)
+
+React does **not** include a TV focus manager. On every new React TV project, a **custom focus/navigation manager must be created** before building UI screens. It must handle:
+
+1. **DOM `keydown` / `keyup`** listener on `document` (single root handler).
+2. **Key mapping** — physical keys to logical directions (`Left`, `Right`, `Up`, `Down`, `Enter`, `Back`), with PAL keycodes for platform overrides.
+3. **Focus tree / focus path** — track focused element and ancestors so containers (rows, columns, grids) can intercept navigation.
+4. **Capture and bubble propagation** — ancestor containers capture keys before children bubble.
+5. **Throttling** — configurable global and per-element input throttle.
+6. **Focus restore** — after modal close, route change, or player exit.
+7. **`autofocus`** — one element receives focus on first paint.
+
+**Agent rule:** When starting a new React TV project, prompt the developer to create or integrate a focus manager before building UI screens.
+
+**Do not use the Norigin Spatial Navigation library** (`@noriginmedia/norigin-spatial-navigation` or any fork). It relies on DOM measurement and spatial distance calculations per focus move — expensive on TV hardware, unpredictable on complex layouts. Lacks capture/bubble, fine-grained throttling, and PAL integration. Build a purpose-built manager.
+
+---
+
+## Focus and animation timing
+
+**Goal:** Immediate focus ring and carousel feedback on key press. TV users perceive one missed frame as sluggish.
+
+- **`useEffect` is too late.** It runs **after** paint. Focus updates in `useEffect` = one frame of stale focus visible to user.
+- **Prefer:**
+  1. Update focus/animation state **in the key event handler** (`onKeyDown` / capture phase) so the next commit reflects new focus.
+  2. **`useLayoutEffect`** for DOM work before paint: `element.focus()`, `scrollIntoView`, imperative animation. Runs after DOM mutations, before paint.
+  3. **`flushSync`** from `react-dom` only when batched updates delay visible focus and profiling confirms lag — use sparingly.
+- **Avoid:** Relying on `useEffect` alone for focus moves, focus classes, or motion the user should feel on the same key event.
+
+---
+
+## GPU-accelerated CSS
+
+**Animate only `transform` and `opacity`** — these run on the GPU compositor without triggering layout.
+
+- Movement: `transform: translate3d(...)` or `translateX()`. **Never** transition `left`, `top`, `width`, `height`.
+- Enter/exit: `opacity` + `transform` beats `height`/`max-height` animations.
+- `will-change` sparingly. `contain` for layout/paint isolation. Avoid `box-shadow` / `filter` transitions on large regions.
+
+---
+
+## Runtime scale utility
+
+Define layout values in JavaScript (inline styles), not CSS files. Scale at runtime:
+
+```typescript
+const DESIGN_WIDTH = 1920;
+const DEVICE_WIDTH = 1280; // detected from PAL or screen
+const RATIO = DEVICE_WIDTH / DESIGN_WIDTH;
+
+export function px(designPx: number, roundDown = false): number {
+  const scaled = designPx * RATIO;
+  return roundDown ? Math.floor(scaled) : Math.ceil(scaled);
+}
+```
+
+```tsx
+<div style={{
+  position: 'absolute',
+  top: px(60),
+  left: px(80),
+  width: px(1760, true),
+  height: px(400)
+}}>
+```
+
+- Author all values at 1920x1080. `px()` scales to device resolution at runtime.
+- Ceil by default (avoids gaps); floor when arg provided (avoids overflow).
+- All values must be whole-number pixels.

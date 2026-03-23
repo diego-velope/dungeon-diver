@@ -1,0 +1,79 @@
+---
+description: Universal TV development tenets for all platforms (HTML5, Roku, tvOS). Performance priority, 10-foot UI, focus navigation, lifecycle, accessibility. Always active.
+alwaysApply: true
+---
+
+# TV Development — Universal Tenets
+
+Apply these tenets to **all** TV platforms: HTML5 (Samsung, LG, Vizio, Fire TV, Android TV, NextGen), Roku (BrightScript/SceneGraph), and tvOS (Swift). Platform-specific rules are in separate files that activate based on the file type you are editing.
+
+## Primary priority: load time and UI performance
+
+**Initial load time (cold start → first meaningful, interactive UI) and ongoing UI performance (smooth focus movement, scrolling, animations, no main-thread stalls) are the single most important success criteria.** This overrides "nice-to-have" features when they would regress startup, frame rate, or memory on the **weakest supported device**.
+
+**When choosing libraries, architecture, or refactors:** ask first whether the change **improves or harms** time-to-first-interaction and **steady-state frame time**. If harmful, **reject, defer, or lazy-load** unless legally or safety-critical.
+
+---
+
+## Tenets (all platforms)
+
+1. **10-foot UI and resolution** — Design for viewing from ~10 feet. Large text, clear focus states, readable hierarchy. **Author all styling at 1920×1080** as the default design resolution. Ensure **all final pixel values are whole numbers** after any scaling — fractional pixels cause blur on TV.
+
+2. **Focus-driven navigation** — Primary input is D-pad/remote (Up, Down, Left, Right, Enter, Back). Every interactive element must be focusable and reachable by focus order. No hover-dependent interactions. Back and Enter keycodes vary by platform — always abstract keycodes through a platform layer.
+
+3. **Performance and memory** — TVs have limited RAM and CPU. Keep bundles/packages small, avoid memory leaks, throttle or defer non-critical work. **Component pooling/recycling** applies to all platforms — instantiation is expensive; recycle and rewrite data instead of destroy + recreate. **Always animate the parent container, not each item individually.** Profile on **real devices and oldest supported firmware**.
+
+4. **Accessibility** — Maintain a logical focus order, visible focus rings, and support for high contrast and reduced motion where the platform allows. Prep the code for TTS integration.
+
+5. **No hover-dependent UI** — Use focus states and explicit activation (Enter/Select). No hover states for critical actions.
+
+6. **Sequencing heavy work** — When parsing large JSON, evaluating heavy payloads, or running CPU-intensive operations that would **block the UI thread / render thread / main actor** and cause hangs: **break into steps with yields**, offload to background threads/workers/Tasks where available, or use smaller bundles + lazy loading. Applies to HTML5 (main thread), Roku (render thread vs Task), and tvOS (main actor vs background).
+
+---
+
+## App lifecycle (all platforms)
+
+1. **Start** — Bootstrap: load config, initialize app, acquire resources.
+2. **Run** — Foreground: visible and interactive; handle key events and focus.
+3. **Background / Suspend** — Release heavy resources, pause timers/animations, persist minimal state.
+4. **Resume** — Restore state, refresh stale data, restore focus.
+5. **Terminate** — OS kills the app. Persist critical state before exit where possible.
+
+---
+
+## Input and UX (all platforms)
+
+- Handle `keydown` / `keyup` (or platform equivalents). Map Arrow keys, Enter/Select, Back.
+- One focusable element has focus at a time; restore focus after modal close or view change.
+- Visible focus rings on every interactive element.
+- Keep critical UI inside **safe areas** (title-safe / action-safe) to avoid overscan.
+
+---
+
+## Project structure
+
+- **Separate repos** for Roku (BrightScript), HTML5 (one JS framework chosen at inception), and tvOS (Swift) — managed in **one Cursor workspace**.
+- **Platform CLIs:**
+  - **Samsung Tizen** — Tizen Studio / CLI (`sdb`).
+  - **LG webOS** — webOS TV CLI (`ares-*`).
+  - **Fire TV** — `adb`, WebView debugging.
+  - **Roku** — Roku CLI, sideload.
+  - **tvOS** — Xcode, Apple TV simulator.
+
+---
+
+## Rule files by scenario
+
+Copy `tv-universal.mdc` (this file) into every project. Then add the files for your scenario:
+
+| Scenario | Files to copy |
+|----------|--------------|
+| **Roku** | `tv-platform-roku.mdc` |
+| **tvOS** | `tv-platform-tvos.mdc` |
+| **HTML5 + React** | `tv-platform-html5.mdc` + `tv-platform-html5-keycodes.mdc` + `tv-platform-html5-velope.mdc` + `tv-framework-react.mdc` |
+| **HTML5 + Solid** | `tv-platform-html5.mdc` + `html5-keycodes` + `html5-velope` + `tv-framework-solid.mdc` |
+| **HTML5 + Lightning/SolidTV** | `tv-platform-html5.mdc` + `html5-keycodes` + `html5-velope` + `tv-framework-lightning.mdc` |
+| **+ WASM** (any HTML5 framework) | Add `tv-engine-wasm.mdc` |
+| **+ Unity** (any HTML5 framework) | Add `tv-engine-unity.mdc` |
+
+Rules activate automatically via glob patterns when editing matching file types.

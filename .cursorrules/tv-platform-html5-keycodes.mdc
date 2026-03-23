@@ -1,0 +1,168 @@
+---
+description: "HTML5 TV platform companion: keycodes by OEM. Navigation and media key tables for Samsung, LG, Vizio, Fire TV, Run3TV, Browser. Always copy with tv-platform-html5.mdc."
+globs: **/*.{ts,tsx,js,jsx,html,css,json}
+alwaysApply: false
+---
+
+# HTML5 TV Keycodes by Platform
+
+Keycode mappings for all HTML5-based smart TV platforms. Values sourced from the velope PAL platform implementations (`velope/ott-platform-*/`).
+
+The PAL maps **numeric DOM keycodes** to **logical key names**. App code should only use logical names; the PAL resolves the correct keycode per platform at runtime.
+
+---
+
+## Logical key names (KeyType)
+
+Defined in `ott-core` (`PlatformModels.d.ts`):
+
+`Left` | `Right` | `Up` | `Down` | `Back` | `MediaPlay` | `MediaPause` | `MediaPlayPause` | `MediaFastForward` | `MediaRewind` | `MediaTrackNext` | `MediaTrackPrevious` | `Exit`
+
+**Note:** `Enter` is not in the core `KeyType` union but is used by the Run3TV platform and by the Lightning UI component layer (`onEnter`, `_handleEnter`). Standard DOM keycode 13 (Enter/Return) is handled by the framework's input system for most platforms without an explicit PAL mapping.
+
+---
+
+## Navigation keycodes (arrows, Enter, Back)
+
+The keys every TV app needs. This is the first table to consult.
+
+| Key | Samsung Tizen | LG webOS | Vizio | Fire TV / Android TV | Browser (dev) | Run3TV |
+|-----|:------------:|:--------:|:-----:|:-------------------:|:-------------:|:------:|
+| **Up** | 38 | 38 | 38 | 38 | 38 | *(dynamic)* |
+| **Down** | 40 | 40 | 40 | 40 | 40 | *(dynamic)* |
+| **Left** | 37 | 37 | 37 | 37 | 37 | *(dynamic)* |
+| **Right** | 39 | 39 | 39 | 39 | 39 | *(dynamic)* |
+| **Enter** | 13 | 13 | 13 | 13 | 13 | *(dynamic)* |
+| **Back** | **10009** | **461** | **8** | **8** *(verify)* | — | *(dynamic)* / 461 |
+| **Exit** | — | — | **27** | — | — | **27** |
+
+Arrow keys (37–40) and Enter (13) are **standard DOM keycodes** and are the same on every Chromium-based TV. **Back is the key that differs by platform** — this is the primary reason the PAL exists for key handling.
+
+---
+
+## Full keycode table (all keys including media)
+
+| Keycode | Key name / origin | Samsung Tizen | LG webOS | Vizio | Fire TV / Android TV | Browser (dev) | Run3TV |
+|---------|-------------------|:------------:|:--------:|:-----:|:-------------------:|:-------------:|:------:|
+| **8** | Backspace | — | — | **Back** | — | — | — |
+| **13** | Enter / Return | *(framework)* | *(framework)* | *(framework)* | *(framework)* | *(framework)* | *(dynamic)* |
+| **19** | Pause (media key) | **MediaPlayPause** | **MediaPause** | **MediaPlayPause** | — | — | — |
+| **27** | Escape | — | — | **Exit** | — | — | **Exit** |
+| **37** | Arrow Left | *(browser default)* | *(browser default)* | **Left** | *(browser default)* | *(browser default)* | — |
+| **38** | Arrow Up | *(browser default)* | *(browser default)* | **Up** | *(browser default)* | *(browser default)* | — |
+| **39** | Arrow Right | *(browser default)* | *(browser default)* | **Right** | *(browser default)* | *(browser default)* | — |
+| **40** | Arrow Down | *(browser default)* | *(browser default)* | **Down** | *(browser default)* | *(browser default)* | — |
+| **70** | F (keyboard) | — | — | — | — | **MediaFastForward** | — |
+| **80** | P (keyboard) | — | — | — | — | **MediaPlayPause** | — |
+| **82** | R (keyboard) | — | — | — | — | **MediaRewind** | — |
+| **412** | MediaRewind (HID) | **MediaRewind** | **MediaRewind** | **MediaRewind** | — | — | — |
+| **413** | MediaStop (HID) | — | — | **MediaPlayPause** | — | — | — |
+| **415** | MediaPlay (HID) | **MediaPlayPause** | **MediaPlay** | **MediaPlayPause** | — | — | — |
+| **417** | MediaFastForward (HID) | **MediaFastForward** | **MediaFastForward** | **MediaFastForward** | — | — | — |
+| **418** | MediaTrackNext (HID) | — | — | **MediaTrackNext** | — | — | — |
+| **419** | MediaTrackPrevious (HID) | — | — | **MediaTrackPrevious** | — | — | — |
+| **461** | webOS Back | — | **Back** | — | — | — | **Back** *(fallback)* |
+| **10009** | Tizen Back | **Back** | — | — | — | — | — |
+| **10252** | Tizen MediaPlayPause | *(registered)* | — | — | — | — | — |
+
+*(browser default)* = Arrow keys (37–40) and Enter (13) are handled by the framework's input layer (e.g. Lightning's `useFocusManager` or the Lightning 2 `StageApplication`) without an explicit PAL keyMapping entry. They use standard DOM keycodes that are consistent across all Chromium-based TVs.
+
+*(framework)* = Enter (13) is handled at the framework level, not in the PAL keyMapping.
+
+*(dynamic)* = Run3TV reads keycodes from `window.fmw.device.deviceInput` at runtime and maps `Select`/`Ok` → Enter, `Return`/`Back` → Back.
+
+*(registered)* = Tizen registers media keys via `tizen.tvinputdevice.registerKeyBatch()` during platform init (`MediaPause`, `MediaPlay`, `MediaFastForward`, `MediaRewind`).
+
+---
+
+## Per-platform details
+
+### Samsung Tizen
+
+- **Back = 10009.** This is Tizen-specific; no other platform uses this code.
+- Media keys must be **registered** before they fire events: `tizen.tvinputdevice.registerKeyBatch(['MediaPause', 'MediaPlay', 'MediaFastForward', 'MediaRewind'])`. Without registration, the TV intercepts them.
+- Arrow keys and Enter use standard DOM codes (37–40, 13) — no PAL override needed.
+- Maps both 415 (MediaPlay) and 19 (Pause) to **MediaPlayPause** (combined toggle).
+
+### LG webOS
+
+- **Back = 461.** Shared with Run3TV fallback.
+- Uses **separate** `MediaPlay` (415) and `MediaPause` (19) rather than a combined toggle.
+- `enablePointer = true` in the webOS PAL — supports Magic Mouse pointer events.
+- Arrow keys and Enter use standard DOM codes — no PAL override needed.
+
+### Vizio
+
+- **Back = 8** (Backspace). Unique among TV platforms.
+- **Exit = 27** (Escape).
+- Explicitly maps arrow keys (37–40) in the PAL, unlike Tizen/webOS which rely on browser defaults.
+- Three keycodes map to **MediaPlayPause**: 19, 413, 415.
+- Only platform with **MediaTrackNext** (418) and **MediaTrackPrevious** (419).
+
+### Run3TV / NextGen
+
+- **Dynamic keycodes.** When the Run3 framework (`window.fmw`) is present, keycodes are read from `window.fmw.device.deviceInput` at runtime. The platform maps:
+  - `Return` or `Back` → **Back**
+  - `Select` or `Ok` → **Enter**
+- **Fallback** (no `window.fmw`): Back = 461, Exit = 27.
+- Actual keycode values vary by device manufacturer (Samsung, LG, Sony, Hisense, Panasonic, Zinwell, ADTH).
+
+### Browser (development)
+
+- Keyboard shortcuts for media controls: **P** (80) = MediaPlayPause, **F** (70) = MediaFastForward, **R** (82) = MediaRewind.
+- No Back or Exit mapping — in desktop development, use browser Back or Escape as needed.
+- Arrow keys and Enter work via standard DOM codes.
+
+### Fire TV / Android TV
+
+- Fire TV (Android-based) and Android TV / Google TV use **standard Android keycode-to-DOM mappings** via the system WebView:
+  - Arrow keys: 37, 38, 39, 40 (standard)
+  - Enter: 13 (standard)
+  - Back: **typically 8** (Backspace) or platform-specific — **verify on device**.
+  - Media keys: standard HID codes (412, 415, 417, etc.) where the remote has media buttons.
+- When adding Fire TV / Android TV PAL support, map Back and any device-specific keys. Arrows and Enter should work without override.
+
+---
+
+## Quick lookup: "What keycode is Back on this platform?"
+
+| Platform | Back keycode | Exit keycode |
+|----------|:-----------:|:------------:|
+| **Samsung Tizen** | **10009** | — |
+| **LG webOS** | **461** | — |
+| **Vizio** | **8** | **27** |
+| **Run3TV** | *(dynamic)* / 461 fallback | **27** |
+| **Browser (dev)** | 8 | — |
+| **Fire TV / Android TV** | **8** *(verify)* | — |
+
+---
+
+## Quick lookup: media keys
+
+| Logical key | Tizen | webOS | Vizio | Browser (dev) |
+|-------------|:-----:|:-----:|:-----:|:-------------:|
+| **MediaPlay** | — | 415 | — | — |
+| **MediaPause** | — | 19 | — | — |
+| **MediaPlayPause** | 415, 19 | — | 19, 413, 415 | 80 (P) |
+| **MediaFastForward** | 417 | 417 | 417 | 70 (F) |
+| **MediaRewind** | 412 | 412 | 412 | 82 (R) |
+| **MediaTrackNext** | — | — | 418 | — |
+| **MediaTrackPrevious** | — | — | 419 | — |
+
+---
+
+## Usage in app code
+
+App code should **never reference numeric keycodes directly**. Use the PAL's `keyMapping` getter:
+
+```typescript
+// At bootstrap
+const platform = getPlatform(); // from ott-platform-detection
+const keyMap = platform.keyMapping;
+
+// In SolidTV: pass to useFocusManager as userKeyMap
+// In Lightning 2: set on stage.application.__keymap
+// In React/Solid-DOM: use in custom focus manager key handler
+```
+
+If a key event's `keyCode` is not in the platform's `keyMapping`, the framework falls back to the DOM `event.key` string (e.g. `'ArrowLeft'`, `'Enter'`, `'Escape'`).

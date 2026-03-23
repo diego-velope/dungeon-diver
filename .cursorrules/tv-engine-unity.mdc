@@ -1,0 +1,147 @@
+---
+description: Unity WebGL WASM rules for TV. C# architecture constraints, build settings, memory config, texture compression, AssetBundles, D-pad input, threading, lifecycle, checklist.
+globs: **/*.{cs,shader,cginc,unity,prefab,asset,asmdef}
+alwaysApply: false
+---
+
+# Unity WebGL — TV Engine Rules
+
+Unity-specific rules for TV games running as WebGL (WASM) in smart TV browsers. Requires `tv-platform-html5.mdc` alongside this file. For generic (non-Unity) WASM, see `tv-engine-wasm.mdc`.
+
+The external shareable guide is in `external/tv-guide-unity-webgl.mdc`. This internal rule includes agent directives and proprietary thresholds.
+
+---
+
+## Architecture: what changes from native Unity
+
+Unity WebGL compiles C# via **IL2CPP → C++ → Emscripten → WASM**. The JS files (`.framework.js`, `.loader.js`) are glue — game logic is WASM. No "compile to JS" option.
+
+### Threading: limited, not absent
+
+- **Engine threads** (physics, animation, audio, Burst jobs) parallelize on Chrome 92+ with COOP/COEP headers and `PlayerSettings.WebGL.threadsSupport`. See `tv-engine-wasm.mdc` for header details.
+- **C# threads do NOT work** (`Task.Run`, `Thread`, `ThreadPool`). C# multithreading is "Under Consideration" on Unity roadmap. Game logic is single-threaded from C#.
+- **Burst-compiled jobs** DO run on background threads when threading is enabled — the path to true parallelism.
+- **Coroutines** and **async/await** (main thread) are the primary tools for spreading C# work across frames.
+
+### No filesystem
+`System.IO.File` does not work. Use `PlayerPrefs` (→ localStorage/IndexedDB) or custom `.jslib` → IndexedDB.
+
+### Memory never shrinks
+WASM heap grows but never returns to browser. Design around peak. Unload old assets before loading new. Pool everything.
+
+### No native plugins
+`.dll`/`.so` don't exist. Use `.jslib` for browser interop. `[DllImport("__Internal")]` for C# → JS calls.
+
+### GC hits harder
+Main-thread GC pauses = frame drops. No `new` in `Update()`. No LINQ in hot paths. Pool, pre-allocate, use structs. Enable incremental GC.
+
+### Exceptions cost binary size
+`Full with Stacktrace` doubles WASM size. Ship `Explicitly Thrown Exceptions Only`. Be defensive — check null, validate indices.
+
+---
+
+## Build settings
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| Code Optimization | `Disk Size with LTO` | Smallest WASM binary |
+| Strip Engine Code | Enabled | Remove unused engine modules |
+| Managed Stripping Level | `High` | Strip unused C#. Test for reflection issues. |
+| IL2CPP Code Generation | `Faster (Smaller) Builds` | Smaller output |
+| Enable Exceptions | `Explicitly Thrown Exceptions Only` | Half the WASM size vs Full |
+| Compression Format | `Brotli` | Best ratio. Requires HTTPS. |
+| Decompression Fallback | `Disabled` | Avoid embedded JS decompressor |
+
+WASM 2023 target: Chrome 91+. Use standard WASM if supporting Chrome 83-90.
+
+---
+
+## Memory configuration
+
+| Setting | Low-end TV | High-end TV |
+|---------|-----------|------------|
+| Initial Memory Size | 64 MB | 128 MB |
+| Maximum Memory Size | 256 MB | 384 MB |
+| Memory Growth Mode | Geometric | Geometric |
+| Geometric Growth Step | 0.2 (20%) | 0.2 |
+| Growth Cap | 64 MB | 96 MB |
+
+Total browser memory on low-end TV: 512 MB–1 GB shared with OS. WASM heap is separate from JS heap and GPU texture memory.
+
+---
+
+## Textures and assets
+
+- **ETC2** default (ARM GPUs). ASTC for modern TVs only. **Never DXT** (software fallback).
+- Reduce Max Size aggressively — 1024 or 512 for non-hero assets. Disable mipmaps for 2D/fixed-camera.
+- **AssetBundles / Addressables** for non-first-screen content. LZ4 compression (LZMA not supported on WebGL). Server applies Brotli on top.
+- **Initial download target: < 10 MB compressed** (WASM 3-6 MB + framework 0.5-1 MB + data 2-5 MB).
+- Audio: Vorbis for music, ADPCM for SFX, 22,050 Hz sample rate.
+
+---
+
+## Input
+
+- All input via DOM `keydown`/`keyup`. `WebGLInput.captureAllKeyboardInput = true`. `Cursor.visible = false`.
+- **All UI navigable via D-pad + Enter + Back.** No mouse/touch. Visible focus state on everything.
+- Unity UI Canvas: `Selectable` navigation (Explicit/Automatic). `StandaloneInputModule` responds to Submit + Cancel.
+- Back keycode varies by platform — abstract via host page or `.jslib` integration.
+
+---
+
+## Loading and first paint
+
+- **Custom WebGL template** (`Assets/WebGLTemplates/`). Inline splash in `index.html`. `onProgress` callback for progress bar.
+- Hide splash only after Unity fully initialized and first frame rendered. Signal via `.jslib` callback.
+- Use native **SplashScreen API** on Vega/Fire TV.
+- **30 fps target** (33 ms budget). 60 fps possible on high-end with simple scenes. Set `Application.targetFrameRate` explicitly.
+
+---
+
+## Graphics
+
+- Strip unused shader variants. Remove from Always Included Shaders.
+- Simple shaders — TV GPUs (Mali, PowerVR) are slower than phone GPUs.
+- No real-time shadows on low-end. Use baked lighting or blob shadows.
+- Draw calls: **< 100** on low-end. Static batching, GPU instancing, texture atlases.
+- FXAA (cheapest AA). No MSAA on TV GPUs.
+- Render at 1920x1080 or 1280x720 upscaled if fill-rate bound.
+
+---
+
+## Lifecycle
+
+- `visibilitychange` → `hidden`: pause (`Time.timeScale = 0`, `AudioListener.pause = true`). Audio bleed = cert failure.
+- `visibilitychange` → `visible`: resume, re-check input.
+- Save frequently via `PlayerPrefs` — OS can kill without warning.
+- `.jslib` plugins for host page communication (splash hide, PAL info, analytics, Back button).
+
+---
+
+## Checklist
+
+### Architecture
+- [ ] Threading decision: Chrome 92+ only + no cross-origin resources → enable `threadsSupport` + COOP/COEP. Otherwise single-threaded C#.
+- [ ] No `Task.Run()` / `Thread` / `ThreadPool` in C#. Coroutines, async/await (main thread), or Burst jobs.
+- [ ] No `System.IO.File`. `PlayerPrefs` or `.jslib` → IndexedDB.
+- [ ] Heavy C# chunked across frames. Burst jobs where possible.
+- [ ] All native plugins have `.jslib` alternatives.
+- [ ] No per-frame allocations. Pooling throughout.
+- [ ] Level transitions: unload old before loading new.
+
+### Build
+- [ ] Release build (not Development). LTO. Brotli. High stripping. Explicitly Thrown exceptions.
+- [ ] Incremental GC enabled.
+
+### Assets
+- [ ] ETC2 textures. Max sizes reduced. Unused shaders stripped.
+- [ ] AssetBundles for non-first-screen. Initial download < 10 MB.
+- [ ] Maximum Memory Size set.
+
+### UX
+- [ ] D-pad + Enter + Back navigable. Visible focus. Cursor hidden.
+- [ ] Custom WebGL template with splash + progress.
+- [ ] `visibilitychange` pauses audio/gameplay. Save often.
+
+### Testing
+- [ ] Real TV hardware at lowest tier. GC profiled. Peak WASM heap within ceiling.

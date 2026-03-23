@@ -1,0 +1,88 @@
+---
+description: Solid-DOM-specific TV rules. Build toolchain, focus manager requirement, createRenderEffect timing, GPU CSS, runtime scale utility, Norigin advisory.
+globs: **/*.{ts,tsx,js,jsx}
+alwaysApply: false
+---
+
+# Solid (DOM) — TV Framework Rules
+
+Solid-DOM-specific rules for HTML5 TV apps. This is for standalone Solid rendering to the DOM — **not** SolidTV/Lightning 3 (see `tv-framework-lightning.mdc`). Requires `tv-platform-html5.mdc` alongside this file.
+
+## Build toolchain
+
+| Bundler | Plugins | Notes |
+|---------|---------|-------|
+| **Vite** (default) | `vite-plugin-solid`, `@vitejs/plugin-legacy` for ES5 | SolidStart and the Solid ecosystem default to Vite. Rolldown in Vite 8+ for fast production builds. |
+
+---
+
+## Focus manager (required — first implementation task)
+
+Solid-DOM does **not** include a TV focus manager. On every new Solid-DOM TV project, a **custom focus/navigation manager must be created** before building UI screens. It must handle:
+
+1. **DOM `keydown` / `keyup`** listener on `document` (single root handler).
+2. **Key mapping** — physical keys to logical directions (`Left`, `Right`, `Up`, `Down`, `Enter`, `Back`), with PAL keycodes for platform overrides.
+3. **Focus tree / focus path** — track focused element and ancestors so containers (rows, columns, grids) can intercept navigation.
+4. **Capture and bubble propagation** — ancestor containers capture keys before children bubble.
+5. **Throttling** — configurable global and per-element input throttle.
+6. **Focus restore** — after modal close, route change, or player exit.
+7. **`autofocus`** — one element receives focus on first paint.
+
+The SolidTV `useFocusManager` (from `@lightningtv/solid/primitives`) is a proven reference implementation — study its capture/bubble model and Row/Column primitives.
+
+**Agent rule:** When starting a new Solid-DOM TV project, prompt the developer to create or integrate a focus manager before building UI screens.
+
+**Do not use the Norigin Spatial Navigation library** (`@noriginmedia/norigin-spatial-navigation` or any fork). It relies on DOM measurement and spatial distance calculations per focus move — expensive on TV hardware, unpredictable on complex layouts. Lacks capture/bubble, fine-grained throttling, and PAL integration. Build a purpose-built manager.
+
+---
+
+## Focus and animation timing
+
+**Goal:** Immediate focus ring and carousel feedback on key press.
+
+- Update **signals** (focused index, animation phase) **in the key handler** so the reactive graph re-runs immediately.
+- **Avoid** putting the first visible focus/animation update only in **`createEffect`** — it runs after paint (similar to React's `useEffect`).
+- **Prefer `createRenderEffect`** for synchronous DOM reads/writes tied to focus — runs during the reactive commit, before paint.
+- Use **refs + `.focus()`** in the handler after setting focus state.
+- **Prefer event-time signal writes** for D-pad navigation.
+- Pair with **GPU transitions** on `transform`/`opacity` so the compositor picks up the new target in the same frame.
+
+---
+
+## GPU-accelerated CSS
+
+**Animate only `transform` and `opacity`** — compositor-only, no layout triggers.
+
+- Movement: `transform: translate3d(...)` or `translateX()`. **Never** transition `left`, `top`, `width`, `height`.
+- Enter/exit: `opacity` + `transform`.
+- `will-change` sparingly. `contain` for isolation. Avoid `box-shadow` / `filter` on large regions.
+
+---
+
+## Runtime scale utility
+
+Define layout values in JavaScript (inline styles), not CSS files:
+
+```typescript
+const DESIGN_WIDTH = 1920;
+const DEVICE_WIDTH = 1280; // detected from PAL or screen
+const RATIO = DEVICE_WIDTH / DESIGN_WIDTH;
+
+export function px(designPx: number, roundDown = false): number {
+  const scaled = designPx * RATIO;
+  return roundDown ? Math.floor(scaled) : Math.ceil(scaled);
+}
+```
+
+```tsx
+<div style={{
+  position: 'absolute',
+  top: `${px(60)}px`,
+  left: `${px(80)}px`,
+  width: `${px(1760, true)}px`,
+  height: `${px(400)}px`
+}}>
+```
+
+- Author at 1920x1080. `px()` scales at runtime. Ceil default, floor with arg.
+- All values whole-number pixels.
