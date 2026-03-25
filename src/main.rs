@@ -45,6 +45,7 @@ async fn main() {
     game.load_items_atlas().await;
     game.load_enemy_atlas().await;
     game.load_font().await;
+    game.load_audio().await;
     game.load_title_background().await;
 
     // Main game loop

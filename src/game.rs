@@ -2,6 +2,7 @@
 // Handles game states, update loop, and rendering
 
 use macroquad::prelude::*;
+use macroquad::audio::{Sound, load_sound, play_sound, PlaySoundParams, set_sound_volume};
 use crate::constants::*;
 use crate::input::*;
 use crate::level::*;
@@ -50,6 +51,12 @@ pub struct Game {
     pub font: Option<Font>,
     /// Title screen background
     title_background: Option<Texture2D>,
+    // --- Audio and Settings ---
+    pub bgm: Option<Sound>,
+    pub music_volume: i32,
+    pub pending_music_volume: i32,
+    pub settings_open: bool,
+    pub settings_selection: usize,
 }
 
 impl Game {
@@ -73,6 +80,11 @@ impl Game {
             enemy_atlas: None,
             font: None,
             title_background: None,
+            bgm: None,
+            music_volume: 10,
+            pending_music_volume: 10,
+            settings_open: false,
+            settings_selection: 0,
         }
     }
 
@@ -90,8 +102,14 @@ impl Game {
     }
 
     pub async fn load_font(&mut self) {
-        if let Ok(font_data) = load_file("assets/fonts/PixelifySans-Medium.ttf").await {
+        if let Ok(font_data) = load_file("assets/fonts/PixelifySans-Regular.ttf").await {
             self.font = load_ttf_font_from_bytes(&font_data).ok();
+        }
+    }
+
+    pub async fn load_audio(&mut self) {
+        if let Ok(sound) = load_sound("assets/audio/water_and_flint.mp3").await {
+            self.bgm = Some(sound);
         }
     }
 
@@ -143,6 +161,17 @@ impl Game {
         self.coins = 0;
         self.current_level = 1;
         self.level_complete_timer = 0.0;
+
+        // Start background music loop
+        if let Some(sound) = &self.bgm {
+            play_sound(
+                &sound,
+                PlaySoundParams {
+                    looped: true,
+                    volume: self.music_volume as f32 / 10.0,
+                },
+            );
+        }
     }
 
     /// Load player sprites (call once at startup)
@@ -314,6 +343,11 @@ impl Game {
     }
 
     fn update_pause_menu(&mut self, actions: &[InputAction]) {
+        if self.settings_open {
+            self.update_settings(actions);
+            return;
+        }
+
         const MENU_ITEMS: &[&str] = &["Return to game", "Inventory", "Options", "Exit game"];
 
         for &action in actions {
@@ -332,13 +366,56 @@ impl Game {
                     match self.pause_selection {
                         0 => self.state = GameState::Playing, // Return to game
                         1 => self.state = GameState::Inventory, // Inventory
-                        2 => {} // Options (TODO)
+                        2 => {
+                            self.settings_open = true;
+                            self.pending_music_volume = self.music_volume;
+                            self.settings_selection = 0;
+                        }
                         3 => self.state = GameState::Title, // Exit game
                         _ => {}
                     }
                 }
-                InputAction::Pause => {
+                InputAction::Pause | InputAction::Cancel => {
                     self.state = GameState::Playing;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn update_settings(&mut self, actions: &[InputAction]) {
+        for &action in actions {
+            match action {
+                InputAction::MoveLeft => {
+                    if self.settings_selection == 0 {
+                        self.pending_music_volume = (self.pending_music_volume - 1).max(0);
+                    }
+                }
+                InputAction::MoveRight => {
+                    if self.settings_selection == 0 {
+                        self.pending_music_volume = (self.pending_music_volume + 1).min(10);
+                    }
+                }
+                InputAction::MoveDown | InputAction::MoveUp => {
+                    self.settings_selection = (self.settings_selection + 1) % 2;
+                }
+                InputAction::Confirm | InputAction::Attack => {
+                    if self.settings_selection == 1 {
+                        // Save
+                        self.music_volume = self.pending_music_volume;
+                        self.settings_open = false;
+                        // Apply volume live
+                        if let Some(sound) = &self.bgm {
+                            set_sound_volume(&sound, self.music_volume as f32 / 10.0);
+                        }
+                    } else {
+                        // Toggle to Save button
+                        self.settings_selection = 1;
+                    }
+                }
+                InputAction::Cancel | InputAction::Pause => {
+                    self.settings_open = false;
+                    self.pending_music_volume = self.music_volume;
                 }
                 _ => {}
             }
@@ -430,7 +507,11 @@ impl Game {
             }
             GameState::PauseMenu => {
                 self.draw_playing(); // Draw game behind menu
-                self.draw_pause_menu();
+                if self.settings_open {
+                    self.draw_settings_overlay();
+                } else {
+                    self.draw_pause_menu();
+                }
             }
             GameState::Inventory => {
                 self.draw_playing(); // Draw game behind inventory
@@ -659,45 +740,146 @@ impl Game {
         const MENU_ITEMS: &[&str] = &["Return to game", "Inventory", "Options", "Exit game"];
 
         // Semi-transparent overlay
-        draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, UI_BG);
+        draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, Color { r: 0.0, g: 0.0, b: 0.1, a: 0.5 });
 
         // Menu box
-        let menu_w = 350.0;
-        let menu_h = MENU_ITEMS.len() as f32 * MENU_ITEM_HEIGHT + MENU_PADDING * 2.0;
+        let menu_w = 450.0;
+        let menu_h = MENU_ITEMS.len() as f32 * MENU_ITEM_HEIGHT + MENU_PADDING * 4.0;
         let menu_x = (SCREEN_W - menu_w) / 2.0;
         let menu_y = (SCREEN_H - menu_h) / 2.0;
 
         draw_rectangle(menu_x, menu_y, menu_w, menu_h, UI_BG);
         draw_rectangle_lines(menu_x, menu_y, menu_w, menu_h, 3.0, UI_BORDER);
 
+        draw_text_ex_centered(
+            "PAUSED",
+            (SCREEN_W / 2.0) - 15.0,
+            menu_y + 60.0,
+            TextParams {
+                font_size: TEXT_LARGE,
+                font: self.font.as_ref(),
+                color: LEVEL1_PALETTE.accent,
+                ..Default::default()
+            },
+        );
+
         // Draw menu items
         for (i, item) in MENU_ITEMS.iter().enumerate() {
-            let item_y = menu_y + MENU_PADDING + i as f32 * MENU_ITEM_HEIGHT;
+            let item_y = menu_y + MENU_PADDING + 80.0 + i as f32 * MENU_ITEM_HEIGHT;
 
             // Highlight selected item
             if i == self.pause_selection {
                 draw_rectangle(
-                    menu_x + 10.0,
-                    item_y - 5.0,
-                    menu_w - 20.0,
+                    menu_x + 20.0,
+                    item_y - 30.0,
+                    menu_w - 40.0,
                     MENU_ITEM_HEIGHT - 10.0,
                     UI_HIGHLIGHT
                 );
             }
 
-            // Draw text - selected item is white, unselected is normal text color
+            // Draw text
+            let color = if i == self.pause_selection { WHITE } else { LEVEL1_PALETTE.text };
             draw_text_ex_centered(
                 item,
-                SCREEN_W / 2.0 - 20.0,
-                item_y + MENU_ITEM_HEIGHT / 2.0 + 10.0,
+                (SCREEN_W / 2.0) - 15.0,
+                item_y + 15.0,
                 TextParams {
                     font_size: TEXT_NORMAL,
                     font: self.font.as_ref(),
-                    color: if i == self.pause_selection { WHITE } else { LEVEL1_PALETTE.text },
+                    color,
                     ..Default::default()
                 },
             );
         }
+    }
+
+    fn draw_settings_overlay(&self) {
+        // Semi-transparent overlay
+        draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, Color { r: 0.0, g: 0.0, b: 0.1, a: 0.5 });
+
+        let menu_w = 500.0;
+        let menu_h = 400.0;
+        let menu_x = (SCREEN_W - menu_w) / 2.0;
+        let menu_y = (SCREEN_H - menu_h) / 2.0;
+
+        draw_rectangle(menu_x, menu_y, menu_w, menu_h, UI_BG);
+        draw_rectangle_lines(menu_x, menu_y, menu_w, menu_h, 3.0, UI_BORDER);
+
+        draw_text_ex_centered(
+            "SETTINGS",
+            (SCREEN_W / 2.0) - 20.0,
+            menu_y + 60.0,
+            TextParams {
+                font_size: TEXT_LARGE,
+                font: self.font.as_ref(),
+                color: LEVEL1_PALETTE.accent,
+                ..Default::default()
+            },
+        );
+
+        // Music Volume Row
+        let vol_y = menu_y + 160.0;
+        let is_vol_sel = self.settings_selection == 0;
+
+        if is_vol_sel {
+            draw_rectangle(menu_x + 30.0, vol_y - 40.0, menu_w - 60.0, 100.0, UI_HIGHLIGHT);
+        }
+
+        let vol_text = format!("Music Volume: {}/10", self.pending_music_volume);
+        draw_text_ex_centered(
+            &vol_text,
+            (SCREEN_W / 2.0) - 15.0,
+            vol_y,
+            TextParams {
+                font_size: TEXT_NORMAL,
+                font: self.font.as_ref(),
+                color: if is_vol_sel { WHITE } else { LEVEL1_PALETTE.text },
+                ..Default::default()
+            },
+        );
+
+        // Volume bar
+        let bar_w = 300.0;
+        let bar_h = 10.0;
+        let bar_x = (SCREEN_W - bar_w) / 2.0;
+        let bar_y = vol_y + 10.0;
+        draw_rectangle(bar_x, bar_y, bar_w, bar_h, Color { r: 0.2, g: 0.2, b: 0.3, a: 1.0 });
+        let fill_w = bar_w * (self.pending_music_volume as f32 / 10.0);
+        let bar_color = if is_vol_sel { WHITE } else { LEVEL1_PALETTE.accent };
+        draw_rectangle(bar_x, bar_y, fill_w, bar_h, bar_color);
+
+        draw_text_ex_centered(
+            "< Left / Right >",
+            SCREEN_W / 2.0,
+            vol_y + 60.0,
+            TextParams {
+                font_size: TEXT_SMALL,
+                font: self.font.as_ref(),
+                color: if is_vol_sel { WHITE } else { LEVEL1_PALETTE.text },
+                ..Default::default()
+            },
+        );
+
+        // Save Button
+        let save_y = menu_y + 320.0;
+        let is_save_sel = self.settings_selection == 1;
+
+        if is_save_sel {
+            draw_rectangle(menu_x + 100.0, save_y - 30.0, menu_w - 200.0, 60.0, UI_HIGHLIGHT);
+        }
+
+        draw_text_ex_centered(
+            "SAVE & RETURN",
+            (SCREEN_W / 2.0) - 15.0,
+            save_y + 10.0,
+            TextParams {
+                font_size: TEXT_NORMAL,
+                font: self.font.as_ref(),
+                color: if is_save_sel { WHITE } else { LEVEL1_PALETTE.text },
+                ..Default::default()
+            },
+        );
     }
 
     fn draw_inventory(&self) {

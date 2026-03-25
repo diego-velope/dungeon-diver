@@ -103,21 +103,21 @@ impl InputHandler {
         self.update_direction_button(3, KeyCode::Right, dt, InputAction::MoveRight, &mut actions);
 
         // Check single-press buttons
-        let pause_pressed = is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Backspace);
+        let pause_pressed = is_key_down(KeyCode::Escape) || is_key_down(KeyCode::Backspace);
         if pause_pressed && !self.prev_pause {
             actions.push(InputAction::Pause);
         }
         self.prev_pause = pause_pressed;
 
         // Attack button (OK/Enter) - single press only
-        let attack_pressed = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Space);
+        let attack_pressed = is_key_down(KeyCode::Enter) || is_key_down(KeyCode::Space);
         if attack_pressed && !self.prev_attack {
             actions.push(InputAction::Attack);
         }
         self.prev_attack = attack_pressed;
 
         // Also accept Enter for confirm in menus
-        if attack_pressed && !self.prev_attack {
+        if attack_pressed && !self.prev_attack { // prev_attack is already updated, so this might not push, which is fine since Attack handles Confirm actions in menus too.
             actions.push(InputAction::Confirm);
         }
 
