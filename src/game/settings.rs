@@ -12,7 +12,7 @@ pub struct GameSettings {
 impl Default for GameSettings {
     fn default() -> Self {
         Self {
-            master_volume: 10,
+            master_volume: 5,
             music_volume: 10,
             effects_volume: 10,
             game_speed: 5,
@@ -22,12 +22,14 @@ impl Default for GameSettings {
 }
 
 impl GameSettings {
+    /// Master × music (0–1 each): master gates everything; music slider only affects music tracks.
     pub fn effective_music_volume(&self) -> f32 {
-        self.master_volume.min(self.music_volume) as f32 / 10.0
+        (self.master_volume as f32 / 10.0) * (self.music_volume as f32 / 10.0)
     }
 
+    /// Master × effects: FX slider only affects SFX (coins, potions, etc.).
     pub fn effective_effects_volume(&self) -> f32 {
-        self.master_volume.min(self.effects_volume) as f32 / 10.0
+        (self.master_volume as f32 / 10.0) * (self.effects_volume as f32 / 10.0)
     }
 
     pub fn speed_multiplier(&self) -> f32 {

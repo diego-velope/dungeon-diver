@@ -3,11 +3,9 @@
 //
 // ── SPRITE SHEET SPEC (verified by pixel measurement) ────────────────────────
 //
-//  All sheets use 32×32 px frames, 4 rows for 4 directions:
-//    Row 0 → Down  (front-facing, both arms visible)
-//    Row 1 → Left  (left-profile)
-//    Row 2 → Up    (back/away-facing)
-//    Row 3 → Right (right-profile)
+//  All sheets use 32×32 px frames, 4 rows:
+//    Row 0 → Down  Row 1 → side profile (Left + Right via flip_x)  Row 2 → Up
+//    Row 3 is unused for horizontal (kept for sheet layout compatibility).
 //
 //  idle:  256×128  8 cols × 4 rows  (8 frames per direction)
 //  run:   256×128  8 cols × 4 rows  (8 frames per direction)
@@ -73,6 +71,9 @@ impl EnemyAtlas {
 pub struct Enemy {
     pub grid_x: i32,
     pub grid_y: i32,
+    /// Tile the enemy stepped from when `is_moving` (same role as `Player::move_start_*`).
+    pub move_start_x: i32,
+    pub move_start_y: i32,
     pub x: f32,
     pub y: f32,
 
@@ -96,7 +97,12 @@ impl Enemy {
         let x = grid_x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
         let y = grid_y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
         Self {
-            grid_x, grid_y, x, y,
+            grid_x,
+            grid_y,
+            move_start_x: grid_x,
+            move_start_y: grid_y,
+            x,
+            y,
             hp: ENEMY_HP,
             max_hp: ENEMY_HP,
             attack_cooldown: 0.0,
@@ -159,6 +165,8 @@ impl Enemy {
             let ny = me.grid_y + dy;
             if level.is_valid(nx, ny) {
                 me.facing = dir;
+                me.move_start_x = me.grid_x;
+                me.move_start_y = me.grid_y;
                 me.grid_x = nx;
                 me.grid_y = ny;
                 me.is_moving = true;
@@ -206,6 +214,8 @@ impl Enemy {
                 && !tiles[ny as usize][nx as usize].is_solid();
             if valid {
                 me.facing = dir;
+                me.move_start_x = me.grid_x;
+                me.move_start_y = me.grid_y;
                 me.grid_x = nx;
                 me.grid_y = ny;
                 me.is_moving = true;
@@ -240,13 +250,12 @@ impl Enemy {
             self.x = self.grid_x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
             self.y = self.grid_y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
         } else {
-            let (dx, dy) = self.facing.to_vec();
-            let sx = self.grid_x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-            let sy = self.grid_y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-            let tx = (self.grid_x + dx) as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-            let ty = (self.grid_y + dy) as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-            self.x = sx + (tx - sx) * self.move_progress;
-            self.y = sy + (ty - sy) * self.move_progress;
+            let start_x = self.move_start_x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            let start_y = self.move_start_y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            let target_x = self.grid_x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            let target_y = self.grid_y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            self.x = start_x + (target_x - start_x) * self.move_progress;
+            self.y = start_y + (target_y - start_y) * self.move_progress;
         }
     }
 
@@ -304,15 +313,19 @@ impl Enemy {
             _                                          => &atlas.idle,
         };
 
-        // ── direction row ─────────────────────────────────────────────────
-        // All sheets: Row 0=Down  Row 1=Left  Row 2=Up  Row 3=Right
+        // ── direction row (match Player::draw: one side-profile row + flip_x) ──
+        // Sheets have 4 rows (Down / side / Up / side). Use the same side row for
+        // Left and Right and mirror for one direction so facing matches movement.
         let total_rows = (sprite.height() / FRAME_H).floor() as usize;
         let dir_row = match self.facing {
             Direction::Down  => 0,
             Direction::Left  => 1,
+            Direction::Right => 1,
             Direction::Up    => 2,
-            Direction::Right => 3,
-        }.min(total_rows.saturating_sub(1));  // clamp so we never read past sheet
+        }
+        .min(total_rows.saturating_sub(1));
+
+        let flip_x = self.facing == Direction::Left;
 
         // ── animation frame ───────────────────────────────────────────────
         let frames_per_row = (sprite.width() / FRAME_W).floor() as usize;
@@ -320,25 +333,31 @@ impl Enemy {
 
         let src_x = frame_idx as f32 * FRAME_W;
         let src_y = dir_row   as f32 * FRAME_H;
+        let src_w = FRAME_W.min(sprite.width() - src_x).max(1.0);
+        let src_h = FRAME_H.min(sprite.height() - src_y).max(1.0);
+
+        let display_size = ENEMY_DISPLAY_SIZE;
+        let half_size = display_size / 2.0;
 
         draw_texture_ex(
             sprite,
-            sx - TILE_SIZE / 2.0,
-            sy - TILE_SIZE / 2.0,
+            sx - half_size,
+            sy - half_size,
             WHITE,
             DrawTextureParams {
-                source:    Some(Rect::new(src_x, src_y, FRAME_W, FRAME_H)),
-                dest_size: Some(vec2(TILE_SIZE, TILE_SIZE)),
+                source:    Some(Rect::new(src_x, src_y, src_w, src_h)),
+                dest_size: Some(vec2(display_size, display_size)),
+                flip_x,
                 ..Default::default()
             },
         );
 
         // ── health bar (shown when hurt or chasing) ───────────────────────
         if self.state == EnemyState::Chasing || self.state == EnemyState::Hurt {
-            let bar_w   = TILE_SIZE * 0.75;
+            let bar_w   = display_size * 0.75;
             let bar_h   = 4.0;
             let bar_x   = sx - bar_w / 2.0;
-            let bar_y   = sy - TILE_SIZE / 2.0 - 8.0;
+            let bar_y   = sy - half_size - 8.0;
             let hp_frac = self.hp as f32 / self.max_hp as f32;
 
             draw_rectangle(bar_x, bar_y, bar_w,           bar_h, Color { r:0.3, g:0.0, b:0.0, a:0.8 });

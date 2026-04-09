@@ -2,7 +2,7 @@
 // Handles game states, update loop, and rendering
 
 use macroquad::prelude::*;
-use macroquad::audio::{Sound, load_sound, play_sound, PlaySoundParams, set_sound_volume};
+use macroquad::audio::{Sound, load_sound, play_sound, stop_sound, PlaySoundParams, set_sound_volume};
 use crate::config::*;
 use crate::input::*;
 use crate::rendering::Camera;
@@ -67,8 +67,17 @@ pub struct Game {
     title_btn_focused: Option<Texture2D>,
     title_btn_unfocused: Option<Texture2D>,
     title_btn_clicked: Option<Texture2D>,
+    /// Stone plate for pause menu (same asset family as main menu).
+    pause_plate: Option<Texture2D>,
     // --- Audio and Settings ---
-    pub bgm: Option<Sound>,
+    /// Looped on title / main menu (`intro_music.mp3`).
+    pub intro_music: Option<Sound>,
+    /// Looped during gameplay (`background_music.wav`).
+    pub gameplay_music: Option<Sound>,
+    sfx_coin: Option<Sound>,
+    sfx_blue_coin: Option<Sound>,
+    sfx_coin_bag: Option<Sound>,
+    sfx_use_potion: Option<Sound>,
     pub settings_open: bool,
     pub game_settings: GameSettings,
     pub shutdown_flow: ShutdownFlow,
@@ -104,7 +113,13 @@ impl Game {
             title_btn_focused: None,
             title_btn_unfocused: None,
             title_btn_clicked: None,
-            bgm: None,
+            pause_plate: None,
+            intro_music: None,
+            gameplay_music: None,
+            sfx_coin: None,
+            sfx_blue_coin: None,
+            sfx_coin_bag: None,
+            sfx_use_potion: None,
             settings_open: false,
             game_settings: GameSettings::default(),
             shutdown_flow: ShutdownFlow::default(),
@@ -134,8 +149,68 @@ impl Game {
     }
 
     pub async fn load_audio(&mut self) {
-        if let Ok(sound) = load_sound("assets/audio/water_and_flint.mp3").await {
-            self.bgm = Some(sound);
+        self.intro_music = load_sound("assets/audio/intro_music.mp3").await.ok();
+        self.gameplay_music = load_sound("assets/audio/background_music.wav").await.ok();
+        self.sfx_coin = load_sound("assets/audio/coin.wav").await.ok();
+        self.sfx_blue_coin = load_sound("assets/audio/blue_coin.wav").await.ok();
+        self.sfx_coin_bag = load_sound("assets/audio/coin_bag.wav").await.ok();
+        self.sfx_use_potion = load_sound("assets/audio/use_potion.wav").await.ok();
+    }
+
+    /// Call after assets load. Loops intro menu music; stops gameplay music if any.
+    pub fn enter_title_music(&mut self) {
+        if let Some(s) = &self.gameplay_music {
+            stop_sound(s);
+        }
+        if let Some(s) = &self.intro_music {
+            stop_sound(s);
+            play_sound(
+                s,
+                PlaySoundParams {
+                    looped: true,
+                    volume: self.game_settings.effective_music_volume(),
+                },
+            );
+        }
+    }
+
+    /// Stops intro and loops gameplay music (master × music volume).
+    pub fn enter_gameplay_music(&mut self) {
+        if let Some(s) = &self.intro_music {
+            stop_sound(s);
+        }
+        if let Some(s) = &self.gameplay_music {
+            stop_sound(s);
+            play_sound(
+                s,
+                PlaySoundParams {
+                    looped: true,
+                    volume: self.game_settings.effective_music_volume(),
+                },
+            );
+        }
+    }
+
+    fn play_sfx(&self, sfx: &Option<Sound>) {
+        if let Some(s) = sfx {
+            play_sound(
+                s,
+                PlaySoundParams {
+                    looped: false,
+                    volume: self.game_settings.effective_effects_volume(),
+                },
+            );
+        }
+    }
+
+    fn play_item_pickup_sfx(&self, kind: ItemType) {
+        match kind {
+            ItemType::Coin => self.play_sfx(&self.sfx_coin),
+            ItemType::BlueCoin => self.play_sfx(&self.sfx_blue_coin),
+            ItemType::CoinBag => self.play_sfx(&self.sfx_coin_bag),
+            ItemType::Potion | ItemType::BigPotion | ItemType::SmallPotion => {
+                self.play_sfx(&self.sfx_use_potion)
+            }
         }
     }
 
@@ -155,6 +230,10 @@ impl Game {
         if let Ok(tex) = load_texture("assets/images/clicked.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.title_btn_clicked = Some(tex);
+        }
+        if let Ok(tex) = load_texture("assets/images/plate.png").await {
+            tex.set_filter(FilterMode::Nearest);
+            self.pause_plate = Some(tex);
         }
     }
 
@@ -200,16 +279,7 @@ impl Game {
         self.current_level = 1;
         self.level_complete_timer = 0.0;
 
-        // Start background music loop
-        if let Some(sound) = &self.bgm {
-            play_sound(
-                &sound,
-                PlaySoundParams {
-                    looped: true,
-                    volume: self.game_settings.effective_music_volume(),
-                },
-            );
-        }
+        self.enter_gameplay_music();
     }
 
     /// Load player sprites (call once at startup)
@@ -271,8 +341,11 @@ impl Game {
             self.screen_flash -= dt;
         }
 
-        if let Some(sound) = &self.bgm {
-            set_sound_volume(sound, self.game_settings.effective_music_volume());
+        if let Some(s) = &self.intro_music {
+            set_sound_volume(s, self.game_settings.effective_music_volume());
+        }
+        if let Some(s) = &self.gameplay_music {
+            set_sound_volume(s, self.game_settings.effective_music_volume());
         }
     }
 
@@ -378,6 +451,7 @@ impl Game {
         }
 
         // Update player and check collisions
+        let mut pickup_sfx: Vec<ItemType> = Vec::new();
         if let (Some(ref mut level), Some(ref mut player)) = (&mut self.level, &mut self.player) {
             player.update(dt, level, actions);
 
@@ -394,7 +468,9 @@ impl Game {
             // Check item collection
             for item in &mut level.items {
                 if !item.collected && item.grid_x == player.grid_x && item.grid_y == player.grid_y {
+                    let kind = item.item_type;
                     let value = item.collect();
+                    pickup_sfx.push(kind);
                     if value > 0 {
                         self.coins += value;
                         self.screen_flash = 0.2; // Small flash on pickup
@@ -466,6 +542,10 @@ impl Game {
                 self.state = GameState::GameOver;
             }
         }
+
+        for k in pickup_sfx {
+            self.play_item_pickup_sfx(k);
+        }
     }
 
     fn update_pause_menu(&mut self, actions: &[InputAction]) {
@@ -476,7 +556,7 @@ impl Game {
             return;
         }
 
-        const MENU_ITEMS: &[&str] = &["Return to game", "Inventory", "Options", "Exit game"];
+        const MENU_ITEMS: &[&str] = &["Return to game", "Inventory", "Settings", "Exit game"];
 
         for &action in actions {
             match action {
@@ -498,7 +578,10 @@ impl Game {
                             self.settings_open = true;
                             self.game_settings.focused_row = 0;
                         }
-                        3 => self.state = GameState::Title, // Exit game
+                        3 => {
+                            self.state = GameState::Title;
+                            self.enter_title_music();
+                        }
                         _ => {}
                     }
                 }
@@ -512,11 +595,14 @@ impl Game {
 
     fn update_inventory(&mut self, actions: &[InputAction]) {
         for &action in actions {
-            match action {
-                InputAction::Pause | InputAction::Cancel => {
-                    self.state = GameState::PauseMenu;
-                }
-                _ => {}
+            if matches!(
+                action,
+                InputAction::Pause
+                    | InputAction::Cancel
+                    | InputAction::Confirm
+                    | InputAction::Attack
+            ) {
+                self.state = GameState::PauseMenu;
             }
         }
     }
@@ -528,6 +614,7 @@ impl Game {
                     self.state = GameState::Title;
                     self.player = None;
                     self.level = None;
+                    self.enter_title_music();
                 }
                 _ => {}
             }
@@ -655,7 +742,7 @@ impl Game {
         let button_w = TITLE_MENU_BUTTON_W;
         let button_h = TITLE_MENU_BUTTON_H;
         let spacing = TITLE_MENU_BUTTON_GAP;
-        let start_y = 250.0;
+        let start_y = TITLE_MENU_START_Y;
         let x = (SCREEN_W - button_w) / 2.0;
 
         for (i, label) in MENU_ITEMS.iter().enumerate() {
@@ -704,21 +791,73 @@ impl Game {
 
     fn draw_hud(&self) {
         if let Some(ref player) = self.player {
-            let padding = 20.0;
             let heart_size = 32.0;
-            let heart_spacing = 40.0;
+            let heart_spacing = 36.0;
+            let max_hearts = player.max_hp / 2;
+            let coin_font = 24_u16;
+            let coin_label = format!("COINS  {}", self.coins);
+            let coin_dims = measure_text(&coin_label, self.ui_font.as_ref(), coin_font, 1.0);
+            let row_gap = 8.0;
+            let outer_pad = 14.0;
+
+            let hearts_row_w = if max_hearts > 0 {
+                (max_hearts as f32 - 1.0) * heart_spacing + heart_size
+            } else {
+                0.0
+            };
+            let content_w = hearts_row_w.max(coin_dims.width);
+            let content_h = heart_size + row_gap + coin_dims.height;
+
+            let panel_w = content_w + outer_pad * 2.0;
+            let panel_h = content_h + outer_pad * 2.0 + 10.0;
+            let panel_x = 0.0;
+            let panel_y = 0.0;
+
+            if let Some(ref plate) = self.pause_plate {
+                draw_texture_ex(
+                    plate,
+                    panel_x,
+                    panel_y,
+                    WHITE,
+                    DrawTextureParams {
+                        dest_size: Some(vec2(panel_w, panel_h)),
+                        ..Default::default()
+                    },
+                );
+            } else {
+                draw_rectangle(
+                    panel_x,
+                    panel_y,
+                    panel_w,
+                    panel_h,
+                    Color::from_rgba(12, 14, 22, 200),
+                );
+                draw_rectangle_lines(
+                    panel_x,
+                    panel_y,
+                    panel_w,
+                    panel_h,
+                    2.0,
+                    Color::from_rgba(200, 200, 220, 120),
+                );
+            }
+
+            let content_left = panel_x + (panel_w - content_w) / 2.0;
+            let block_top = panel_y + outer_pad;
 
             // Hearts UI: health is tracked in half-hearts.
             let half_hp = player.hp.clamp(0, player.max_hp);
             let full_hearts = half_hp / 2;
             let has_half = (half_hp % 2) == 1;
-            let max_hearts = player.max_hp / 2;
 
             let atlas = self.items_atlas.as_ref();
+            let hearts_left = content_left + (content_w - hearts_row_w) / 2.0;
+            let hx0 = hearts_left + heart_size / 2.0;
+            let hy = block_top + heart_size / 2.0;
             for i in 0..max_hearts {
                 let i_f = i as f32;
-                let x_center = padding + i_f * heart_spacing;
-                let y_center = padding;
+                let x_center = hx0 + i_f * heart_spacing;
+                let y_center = hy;
                 let top_left_x = x_center - heart_size / 2.0;
                 let top_left_y = y_center - heart_size / 2.0;
 
@@ -758,7 +897,6 @@ impl Game {
                         );
                     }
                 } else {
-                    // Fallback: procedural hearts.
                     if i < full_hearts {
                         draw_heart(x_center, y_center, heart_size, LEVEL1_PALETTE.accent);
                     } else if i == full_hearts && has_half {
@@ -770,90 +908,137 @@ impl Game {
                 }
             }
 
-            // Draw coins counter
-            let coin_text = format!("Coins: {}", self.coins);
-            draw_text_ex(
-                &coin_text,
-                padding,
-                padding + heart_size + 10.0,
-                TextParams {
-                    font_size: TEXT_NORMAL,
-                    font: self.font.as_ref(),
-                    color: YELLOW,
-                    ..Default::default()
-                },
+            let coin_x = content_left + (content_w - coin_dims.width) / 2.0;
+            let coin_y = block_top + heart_size + row_gap + coin_dims.offset_y;
+            draw_shadowed_text(
+                &coin_label,
+                coin_x,
+                coin_y,
+                coin_font,
+                self.ui_font.as_ref(),
+                Color::from_rgba(255, 220, 80, 255),
+                Color::from_rgba(30, 20, 8, 255),
             );
 
-            // Draw level label - top center (more padding from top)
-            let level_text = format!("Level {}", self.current_level);
-            draw_text_ex_centered(
+            let level_text = format!("LEVEL {}", self.current_level);
+            let level_font = 30_u16;
+            let font = self.ui_font.as_ref();
+            let tdims = measure_text(&level_text, font, level_font, 1.0);
+            let badge_pad_x = 32.0;
+            let badge_pad_y = 18.0;
+            let badge_w = (tdims.width + badge_pad_x * 2.0).max(168.0);
+            let badge_h = tdims.height + badge_pad_y * 2.0;
+            let badge_x = SCREEN_W / 2.0 - badge_w / 2.0;
+            let badge_y = 12.0;
+            let badge_cx = SCREEN_W / 2.0;
+            let badge_cy = badge_y + badge_h / 2.0;
+
+            if let Some(ref plate) = self.pause_plate {
+                draw_texture_ex(
+                    plate,
+                    badge_x,
+                    badge_y,
+                    WHITE,
+                    DrawTextureParams {
+                        dest_size: Some(vec2(badge_w, badge_h)),
+                        ..Default::default()
+                    },
+                );
+            } else {
+                draw_rectangle(
+                    badge_x,
+                    badge_y,
+                    badge_w,
+                    badge_h,
+                    Color::from_rgba(12, 14, 22, 200),
+                );
+                draw_rectangle_lines(
+                    badge_x,
+                    badge_y,
+                    badge_w,
+                    badge_h,
+                    2.0,
+                    Color::from_rgba(200, 200, 220, 120),
+                );
+            }
+            draw_shadowed_text_centered(
                 &level_text,
-                SCREEN_W / 2.0,
-                padding + 35.0,
-                TextParams {
-                    font_size: TEXT_LARGE,
-                    font: self.font.as_ref(),
-                    color: LEVEL1_PALETTE.text,
-                    ..Default::default()
-                },
+                badge_cx,
+                badge_cy + 10.0,
+                level_font,
+                font,
+                Color::from_rgba(245, 245, 252, 255),
+                Color::from_rgba(20, 20, 30, 255),
             );
         }
     }
 
     fn draw_pause_menu(&self) {
-        const MENU_ITEMS: &[&str] = &["Return to game", "Inventory", "Options", "Exit game"];
+        const MENU_ITEMS: &[&str] = &[
+            "RETURN TO GAME",
+            "INVENTORY",
+            "SETTINGS",
+            "EXIT GAME",
+        ];
 
-        // Semi-transparent overlay
-        draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, Color { r: 0.0, g: 0.0, b: 0.1, a: 0.5 });
-
-        // Menu box
-        let menu_w = 450.0;
-        let menu_h = MENU_ITEMS.len() as f32 * MENU_ITEM_HEIGHT + MENU_PADDING * 4.0;
-        let menu_x = (SCREEN_W - menu_w) / 2.0;
-        let menu_y = (SCREEN_H - menu_h) / 2.0;
-
-        draw_rectangle(menu_x, menu_y, menu_w, menu_h, UI_BG);
-        draw_rectangle_lines(menu_x, menu_y, menu_w, menu_h, 3.0, UI_BORDER);
-
-        draw_text_ex_centered(
-            "PAUSED",
-            (SCREEN_W / 2.0) - 15.0,
-            menu_y + 60.0,
-            TextParams {
-                font_size: TEXT_LARGE,
-                font: self.font.as_ref(),
-                color: LEVEL1_PALETTE.accent,
-                ..Default::default()
-            },
+        draw_rectangle(
+            0.0,
+            0.0,
+            SCREEN_W,
+            SCREEN_H,
+            Color::from_rgba(0, 0, 0, 140),
         );
 
-        // Draw menu items
+        let panel_side = PAUSE_MENU_PANEL_SIDE;
+        let panel_x = (SCREEN_W - panel_side) / 2.0;
+        let panel_y = (SCREEN_H - panel_side) / 2.0;
+
+        draw_rectangle(
+            panel_x,
+            panel_y,
+            panel_side,
+            panel_side,
+            Color::from_rgba(14, 12, 22, 250),
+        );
+        draw_rectangle_lines(
+            panel_x,
+            panel_y,
+            panel_side,
+            panel_side,
+            3.0,
+            Color::from_rgba(55, 50, 75, 220),
+        );
+
+        let title_font = 40_u16;
+        let font = self.ui_font.as_ref();
+        let title_dims = measure_text("PAUSED", font, title_font, 1.0);
+        let title_cy = panel_y + 52.0;
+        draw_shadowed_text_centered(
+            "PAUSED",
+            SCREEN_W / 2.0,
+            title_cy,
+            title_font,
+            font,
+            Color::from_rgba(255, 245, 230, 255),
+            Color::from_rgba(25, 25, 35, 255),
+        );
+        let content_top = title_cy + title_dims.height / 2.0 + 32.0;
+
+        let btn_w = PAUSE_MENU_BUTTON_W;
+        let btn_h = PAUSE_MENU_BUTTON_H;
+        let gap = PAUSE_MENU_BUTTON_GAP;
+        let btn_x = (SCREEN_W - btn_w) / 2.0;
+
         for (i, item) in MENU_ITEMS.iter().enumerate() {
-            let item_y = menu_y + MENU_PADDING + 80.0 + i as f32 * MENU_ITEM_HEIGHT;
-
-            // Highlight selected item
-            if i == self.pause_selection {
-                draw_rectangle(
-                    menu_x + 20.0,
-                    item_y - 30.0,
-                    menu_w - 40.0,
-                    MENU_ITEM_HEIGHT - 10.0,
-                    UI_HIGHLIGHT
-                );
-            }
-
-            // Draw text
-            let color = if i == self.pause_selection { WHITE } else { LEVEL1_PALETTE.text };
-            draw_text_ex_centered(
+            let y = content_top + i as f32 * (btn_h + gap);
+            self.draw_menu_button(
                 item,
-                (SCREEN_W / 2.0) - 15.0,
-                item_y + 15.0,
-                TextParams {
-                    font_size: TEXT_NORMAL,
-                    font: self.font.as_ref(),
-                    color,
-                    ..Default::default()
-                },
+                btn_x,
+                y,
+                btn_w,
+                btn_h,
+                i == self.pause_selection,
+                false,
             );
         }
     }
@@ -863,7 +1048,8 @@ impl Game {
         let box_w = SCREEN_W * 0.64;
         let box_h = SCREEN_H * 0.78;
         let box_x = (SCREEN_W - box_w) / 2.0;
-        let box_y = (SCREEN_H - box_h) / 2.0;
+        // Shift panel up so content is not visually bottom-heavy.
+        let box_y = ((SCREEN_H - box_h) / 2.0 - 36.0).max(12.0);
 
         draw_rectangle(box_x, box_y, box_w, box_h, Color::from_rgba(30, 30, 50, 235));
         draw_rectangle_lines(box_x, box_y, box_w, box_h, 4.0, Color::from_rgba(255, 200, 50, 200));
@@ -871,7 +1057,7 @@ impl Game {
         draw_shadowed_text_centered(
             "SETTINGS",
             SCREEN_W / 2.0,
-            box_y + 60.0,
+            box_y + 48.0,
             50,
             self.ui_font.as_ref(),
             Color::from_rgba(255, 245, 230, 255),
@@ -885,7 +1071,7 @@ impl Game {
             self.game_settings.effects_volume,
             self.game_settings.game_speed,
         ];
-        let start_y = box_y + 140.0;
+        let start_y = box_y + 118.0;
 
         for (i, (label, val)) in labels.iter().zip(values.iter()).enumerate() {
             let y = start_y + i as f32 * 105.0;
@@ -930,11 +1116,22 @@ impl Game {
             } else {
                 format!("{}/10", val)
             };
-            draw_shadowed_text_centered(
+            const SETTINGS_VALUE_FONT: u16 = 28;
+            const GAP_BAR_TO_VALUE: f32 = 10.0;
+            let value_dims = measure_text(
                 &value_text,
-                SCREEN_W / 2.0,
-                bar_y + 40.0,
-                28,
+                self.ui_font.as_ref(),
+                SETTINGS_VALUE_FONT,
+                1.0,
+            );
+            // Macroquad: bbox top is at (text_y - offset_y) for draw_text_ex(..., text_y, ...).
+            let value_text_y = bar_y + bar_h + GAP_BAR_TO_VALUE + value_dims.offset_y;
+            let value_text_x = SCREEN_W / 2.0 - value_dims.width / 2.0;
+            draw_shadowed_text(
+                &value_text,
+                value_text_x,
+                value_text_y,
+                SETTINGS_VALUE_FONT,
                 self.ui_font.as_ref(),
                 WHITE,
                 Color::from_rgba(20, 20, 30, 255),
@@ -942,9 +1139,9 @@ impl Game {
         }
 
         draw_shadowed_text_centered(
-            "ARROWS TO ADJUST - BACK TO CLOSE",
+            "UP / DOWN TO NAVIGATE - LEFT / RIGHT TO ADJUST - BACK TO CLOSE",
             SCREEN_W / 2.0,
-            box_y + box_h - 22.0,
+            box_y + box_h - 28.0,
             24,
             self.ui_font.as_ref(),
             Color::from_rgba(200, 200, 220, 255),
@@ -1066,71 +1263,82 @@ impl Game {
             draw_rectangle_lines(x, y, w, h, 2.0, UI_BORDER);
         }
 
-        draw_shadowed_text_centered(
+        // Macroquad places glyphs so the bbox top is at (text_y - dims.offset_y) for draw_text_ex(text, text_x, text_y, ...).
+        // Vertical center of that bbox: text_y - offset_y + height/2 = y + h/2  =>  text_y = y + h/2 + offset_y - height/2.
+        let font = self.ui_font.as_ref();
+        let font_size = TITLE_MENU_FONT_SIZE;
+        let dims = measure_text(label, font, font_size, 1.0);
+        let text_x = x + w / 2.0 - dims.width / 2.0;
+        let text_y = y + h / 2.0 + dims.offset_y - dims.height / 2.0;
+        draw_shadowed_text(
             label,
-            x + w / 2.0,
-            y + h / 2.0 + 4.0,
-            34,
-            self.ui_font.as_ref(),
+            text_x,
+            text_y,
+            font_size,
+            font,
             Color::from_rgba(240, 245, 255, 255),
             Color::from_rgba(20, 20, 30, 255),
         );
     }
 
     fn draw_inventory(&self) {
-        // Semi-transparent overlay
-        draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, UI_BG);
-
-        draw_text_ex_centered(
+        draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, Color::from_rgba(0, 0, 0, 165));
+        let box_w = SCREEN_W * 0.68;
+        let box_h = SCREEN_H * 0.5;
+        let box_x = (SCREEN_W - box_w) / 2.0;
+        let box_y = (SCREEN_H - box_h) / 2.0;
+        draw_rectangle(box_x, box_y, box_w, box_h, Color::from_rgba(30, 30, 50, 235));
+        draw_rectangle_lines(box_x, box_y, box_w, box_h, 4.0, Color::from_rgba(255, 200, 50, 200));
+        draw_shadowed_text_centered(
             "INVENTORY",
             SCREEN_W / 2.0,
-            SCREEN_H / 2.0,
-            TextParams {
-                font_size: TEXT_LARGE,
-                font: self.font.as_ref(),
-                color: LEVEL1_PALETTE.text,
-                ..Default::default()
-            },
+            box_y + 70.0,
+            48,
+            self.ui_font.as_ref(),
+            WHITE,
+            Color::from_rgba(20, 20, 30, 255),
         );
-
-        draw_text_ex_centered(
-            "Press BACK to return",
+        draw_shadowed_text_centered(
+            "COMING SOON",
             SCREEN_W / 2.0,
-            SCREEN_H / 2.0 + 50.0,
-            TextParams {
-                font_size: TEXT_NORMAL,
-                font: self.font.as_ref(),
-                color: LEVEL1_PALETTE.accent,
-                ..Default::default()
-            },
+            box_y + box_h / 2.0,
+            42,
+            self.ui_font.as_ref(),
+            Color::from_rgba(220, 220, 235, 255),
+            Color::from_rgba(20, 20, 30, 255),
+        );
+        draw_shadowed_text_centered(
+            "PRESS OK OR BACK",
+            SCREEN_W / 2.0,
+            box_y + box_h - 24.0,
+            24,
+            self.ui_font.as_ref(),
+            Color::from_rgba(200, 200, 220, 255),
+            Color::from_rgba(20, 20, 30, 255),
         );
     }
 
     fn draw_game_over(&self) {
         draw_rectangle(0.0, 0.0, SCREEN_W, SCREEN_H, Color { r: 0.0, g: 0.0, b: 0.0, a: 0.8 });
 
-        draw_text_ex_centered(
+        draw_shadowed_text_centered(
             "GAME OVER",
             SCREEN_W / 2.0,
-            SCREEN_H / 2.0 - 30.0,
-            TextParams {
-                font_size: TEXT_TITLE,
-                font: self.font.as_ref(),
-                color: RED,
-                ..Default::default()
-            },
+            SCREEN_H / 2.0 - 36.0,
+            TEXT_TITLE,
+            self.ui_font.as_ref(),
+            Color::from_rgba(255, 80, 80, 255),
+            Color::from_rgba(40, 10, 10, 255),
         );
 
-        draw_text_ex_centered(
-            "Press ENTER to restart",
+        draw_shadowed_text_centered(
+            "PRESS OK TO RETURN TO MENU",
             SCREEN_W / 2.0,
-            SCREEN_H / 2.0 + 30.0,
-            TextParams {
-                font_size: TEXT_MEDIUM,
-                font: self.font.as_ref(),
-                color: LEVEL1_PALETTE.text,
-                ..Default::default()
-            },
+            SCREEN_H / 2.0 + 32.0,
+            TEXT_MEDIUM,
+            self.ui_font.as_ref(),
+            Color::from_rgba(240, 240, 250, 255),
+            Color::from_rgba(20, 20, 30, 255),
         );
     }
 

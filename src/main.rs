@@ -52,6 +52,7 @@ async fn main() {
     game.load_font().await;
     game.load_audio().await;
     game.load_title_background().await;
+    game.enter_title_music();
 
     // Main game loop
     loop {
@@ -62,8 +63,11 @@ async fn main() {
         game.update(dt);
 
         if game.shutdown_flow.stage == ShutdownStage::Requested {
-            if let Some(sound) = &game.bgm {
-                macroquad::audio::stop_sound(sound);
+            if let Some(s) = &game.intro_music {
+                macroquad::audio::stop_sound(s);
+            }
+            if let Some(s) = &game.gameplay_music {
+                macroquad::audio::stop_sound(s);
             }
             game.shutdown_flow.mark_finalizing();
         }

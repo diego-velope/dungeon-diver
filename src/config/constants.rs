@@ -113,6 +113,10 @@ pub const PLAYER_INVINCIBLE_TIME: f32 = 1.0;  // Seconds of invincibility after 
 //   - TILE_SIZE * 2.0 = 2x tile size (best for TV visibility)
 pub const PLAYER_DISPLAY_SIZE: f32 = TILE_SIZE;  // 64x64 at 64px tiles
 
+// Zombie sheets use 32×32 frames but the figure sits small in the cell (lots of padding).
+// Scale up so silhouettes read closer to the knight at PLAYER_DISPLAY_SIZE.
+pub const ENEMY_DISPLAY_SIZE: f32 = TILE_SIZE * 1.5;
+
 // Blue Knight sprite sheets: fixed cell size per asset filename (do not infer from width/frame guess).
 // Frame count = floor(texture_width / cell_w) so strips with 2, 4, 6, etc. frames all work.
 pub const KNIGHT_IDLE_FRAME_W: f32 = 16.0;
@@ -189,4 +193,14 @@ pub const MENU_ITEM_HEIGHT: f32 = 60.0;
 pub const MENU_PADDING: f32 = 20.0;
 pub const TITLE_MENU_BUTTON_W: f32 = 300.0;
 pub const TITLE_MENU_BUTTON_H: f32 = 70.0;
-pub const TITLE_MENU_BUTTON_GAP: f32 = 8.0;
+pub const TITLE_MENU_BUTTON_GAP: f32 = 20.0;
+/// Y position of the top edge of the first main-menu button (below baked-in title art).
+pub const TITLE_MENU_START_Y: f32 = 300.0;
+/// ThaleahFat size for labels on title menu buttons (matches mockup ~28px).
+pub const TITLE_MENU_FONT_SIZE: u16 = 28;
+
+/// Centered dark square behind pause menu title + buttons.
+pub const PAUSE_MENU_PANEL_SIDE: f32 = 480.0;
+pub const PAUSE_MENU_BUTTON_W: f32 = 280.0;
+pub const PAUSE_MENU_BUTTON_H: f32 = 64.0;
+pub const PAUSE_MENU_BUTTON_GAP: f32 = 12.0;
