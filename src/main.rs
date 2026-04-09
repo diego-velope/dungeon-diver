@@ -5,18 +5,20 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::unnecessary_wraps)]
 
-mod constants;
-mod input;
-mod level;
-mod camera;
+mod config;
 mod game;
-mod player;
-mod items;
-mod terrain;
-mod enemy;
+mod input;
+mod world;
+mod entities;
+mod rendering;
 
 use macroquad::prelude::*;
-use game::Game;
+use game::{Game, ShutdownStage, shutdown_game};
+#[cfg(target_arch = "wasm32")]
+pub use input::tv_input_manager::{
+    mq_handle_action, mq_handle_back, mq_handle_down, mq_handle_left, mq_handle_right,
+    mq_handle_up,
+};
 
 /// Window configuration
 fn window_conf() -> Conf {
@@ -36,6 +38,9 @@ fn window_conf() -> Conf {
 /// Main game loop
 #[macroquad::main(window_conf)]
 async fn main() {
+    #[cfg(target_arch = "wasm32")]
+    input::tv_input_manager::init_tv_input_manager();
+
     // Initialize game state
     let mut game = Game::new();
 
@@ -55,6 +60,18 @@ async fn main() {
 
         // Update game logic
         game.update(dt);
+
+        if game.shutdown_flow.stage == ShutdownStage::Requested {
+            if let Some(sound) = &game.bgm {
+                macroquad::audio::stop_sound(sound);
+            }
+            game.shutdown_flow.mark_finalizing();
+        }
+
+        if game.shutdown_flow.stage == ShutdownStage::Finalizing {
+            shutdown_game();
+            break;
+        }
 
         // Render
         game.draw();
