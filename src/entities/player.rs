@@ -41,6 +41,8 @@ pub struct Player {
     pub has_key: bool,
     pub attack_cooldown: f32,
     pub is_attacking: bool,
+    /// Set when a new melee swing starts; consumed by `Game` for hit resolution (not tied to `is_attacking` / anim).
+    melee_hit_pending: bool,
     pub invincible_time: f32,
 
     // Animation
@@ -78,6 +80,7 @@ impl Player {
             has_key: false,
             attack_cooldown: 0.0,
             is_attacking: false,
+            melee_hit_pending: false,
             invincible_time: 0.0,
             anim_state: AnimState::Idle,
             anim_frame: 0,
@@ -210,15 +213,31 @@ impl Player {
     /// Start an attack
     fn start_attack(&mut self) {
         self.is_attacking = true;
+        self.melee_hit_pending = true;
         self.attack_cooldown = PLAYER_ATTACK_COOLDOWN;
         self.anim_state = AnimState::Attack;
         self.anim_frame = 0;
+        // Must reset — otherwise leftover `anim_timer` from Idle/Run can end Attack in the same frame
+        // before `Game` runs combat, and hits are dropped.
+        self.anim_timer = 0.0;
+    }
+
+    /// Take and clear the pending melee hit flag (one damage/VFX resolve per swing).
+    pub fn consume_melee_hit_pending(&mut self) -> bool {
+        let p = self.melee_hit_pending;
+        self.melee_hit_pending = false;
+        p
     }
 
     /// Get the attack hitbox position
     pub fn get_attack_position(&self) -> (i32, i32) {
         let (dx, dy) = self.facing.to_vec();
         (self.grid_x + dx, self.grid_y + dy)
+    }
+
+    /// 0.0 right after attacking, 1.0 when attack is ready again.
+    pub fn attack_ready_percent(&self) -> f32 {
+        (1.0 - (self.attack_cooldown / PLAYER_ATTACK_COOLDOWN)).clamp(0.0, 1.0)
     }
 
     /// Take damage
@@ -285,8 +304,8 @@ impl Player {
                 }
             }
             AnimState::Attack => {
-                // Attack animation is quick
-                if self.anim_timer >= 0.1 {
+                // Attack animation is quick (long enough for at least one frame of `is_attacking` at 30fps)
+                if self.anim_timer >= 0.15 {
                     self.is_attacking = false;
                     self.anim_state = if self.is_moving { AnimState::Run } else { AnimState::Idle };
                     self.anim_frame = 0;
@@ -402,14 +421,6 @@ impl Player {
             draw_circle(screen_x + eye_offset, screen_y - 4.0 * eye_scale, 1.5 * eye_scale, BLACK);
         }
 
-        // Draw attack effect
-        if self.is_attacking {
-            let (dx, dy) = self.facing.to_vec();
-            let attack_x = screen_x + dx as f32 * TILE_SIZE;
-            let attack_y = screen_y + dy as f32 * TILE_SIZE;
-
-            draw_circle_lines(attack_x, attack_y, 8.0, 2.0, YELLOW);
-        }
     }
 
     /// Check if player is alive

@@ -103,7 +103,7 @@ pub const UI_SELECTED: Color = Color { r: 0.5, g: 0.8, b: 1.0, a: 1.0 };
 // Formula: tiles per second * TILE_SIZE. 3.75 tiles/sec feels good.
 pub const PLAYER_SPEED: f32 = 3.75 * TILE_SIZE;  // 240 at 64px, 120 at 32px
 
-pub const PLAYER_ATTACK_COOLDOWN: f32 = 0.3;  // Seconds between attacks
+pub const PLAYER_ATTACK_COOLDOWN: f32 = 1.5;  // Seconds between attacks
 pub const PLAYER_ATTACK_RANGE: f32 = TILE_SIZE;  // Attack range = 1 tile
 pub const PLAYER_INVINCIBLE_TIME: f32 = 1.0;  // Seconds of invincibility after hit
 
@@ -151,6 +151,26 @@ pub const ENEMY_HP: i32 = 3;                    // Zombies take 3 hits to kill
 pub const ENEMY_MOVE_INTERVAL: f32 = 0.5;       // Move every 0.5 seconds
 pub const ENEMY_ACTIVATION_RANGE: i32 = 5;      // Only chase if within 5 tiles
 pub const ENEMY_DAMAGE: i32 = 1;                // Zombies deal 1 damage on contact
+pub const ENEMY_ATTACK_COOLDOWN: f32 = 3.0;     // Seconds between enemy attacks
+
+// ============================================================================
+// COMBAT VFX
+// ============================================================================
+
+pub const HIT_VFX_PLAYER_FRAME_TIME: f32 = 0.07;
+pub const HIT_VFX_ENEMY_FRAME_TIME: f32 = 0.06;
+pub const HIT_VFX_SCALE: f32 = 1.0;
+
+// ============================================================================
+// HUD - ATTACK COOLDOWN BAR
+// ============================================================================
+
+pub const HUD_ATTACK_BAR_FRAME_W: f32 = 220.0;
+pub const HUD_ATTACK_BAR_FRAME_H: f32 = 48.0;
+pub const HUD_ATTACK_BAR_INSET_X: f32 = 14.0;
+pub const HUD_ATTACK_BAR_INSET_Y: f32 = 11.0;
+pub const HUD_ATTACK_BAR_FILL_W: f32 = 192.0;
+pub const HUD_ATTACK_BAR_FILL_H: f32 = 25.0;
 
 // ============================================================================
 // CAMERA

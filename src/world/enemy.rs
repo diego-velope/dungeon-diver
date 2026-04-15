@@ -134,6 +134,11 @@ impl Enemy {
         }
     }
 
+    pub fn get_attack_position(&self) -> (i32, i32) {
+        let (dx, dy) = self.facing.to_vec();
+        (self.grid_x + dx, self.grid_y + dy)
+    }
+
     pub fn is_alive(&self) -> bool {
         self.state != EnemyState::Dead
     }
@@ -211,7 +216,8 @@ impl Enemy {
             let nx = me.grid_x + dx;
             let ny = me.grid_y + dy;
             let valid = nx >= 0 && nx < level_w && ny >= 0 && ny < level_h
-                && !tiles[ny as usize][nx as usize].is_solid();
+                && !tiles[ny as usize][nx as usize].is_solid()
+                && (nx, ny) != player_pos;
             if valid {
                 me.facing = dir;
                 me.move_start_x = me.grid_x;
