@@ -9,6 +9,15 @@ use crate::rendering::Camera;
 use crate::entities::Player;
 use crate::world::*;
 use crate::game::{GameSettings, ShutdownFlow};
+use crate::game::hit_vfx::{HitVfxAtlas, HitVfxInstance, HitVfxKind};
+
+#[derive(Debug, Clone, Copy)]
+enum CombatSfxEvent {
+    EnemyPunch,
+    PlayerSwingMiss,
+    PlayerSwingHit,
+    PlayerSwingFinisher,
+}
 
 /// Game states for state machine
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -69,6 +78,11 @@ pub struct Game {
     title_btn_clicked: Option<Texture2D>,
     /// Stone plate for pause menu (same asset family as main menu).
     pause_plate: Option<Texture2D>,
+    /// Frame used by mini attack cooldown bar in HUD.
+    hud_loading_bar: Option<Texture2D>,
+    /// Combat hit effects.
+    hit_vfx_atlas: Option<HitVfxAtlas>,
+    hit_vfx_instances: Vec<HitVfxInstance>,
     // --- Audio and Settings ---
     /// Looped on title / main menu (`intro_music.mp3`).
     pub intro_music: Option<Sound>,
@@ -78,12 +92,25 @@ pub struct Game {
     sfx_blue_coin: Option<Sound>,
     sfx_coin_bag: Option<Sound>,
     sfx_use_potion: Option<Sound>,
+    sfx_punch_1: Option<Sound>,
+    sfx_punch_2: Option<Sound>,
+    sfx_sword_slash_1: Option<Sound>,
+    sfx_sword_slash_2: Option<Sound>,
+    sfx_sword_slash_3: Option<Sound>,
+    sfx_sword_slash_4: Option<Sound>,
+    sfx_sword_slash_finisher: Option<Sound>,
     pub settings_open: bool,
     pub game_settings: GameSettings,
     pub shutdown_flow: ShutdownFlow,
 }
 
 impl Game {
+    fn spawn_hit_vfx(&mut self, kind: HitVfxKind, tile_x: i32, tile_y: i32, facing: Direction) {
+        if self.hit_vfx_atlas.is_some() {
+            self.hit_vfx_instances.push(HitVfxInstance::spawn(kind, tile_x, tile_y, facing));
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             state: GameState::Title,
@@ -114,12 +141,22 @@ impl Game {
             title_btn_unfocused: None,
             title_btn_clicked: None,
             pause_plate: None,
+            hud_loading_bar: None,
+            hit_vfx_atlas: None,
+            hit_vfx_instances: Vec::new(),
             intro_music: None,
             gameplay_music: None,
             sfx_coin: None,
             sfx_blue_coin: None,
             sfx_coin_bag: None,
             sfx_use_potion: None,
+            sfx_punch_1: None,
+            sfx_punch_2: None,
+            sfx_sword_slash_1: None,
+            sfx_sword_slash_2: None,
+            sfx_sword_slash_3: None,
+            sfx_sword_slash_4: None,
+            sfx_sword_slash_finisher: None,
             settings_open: false,
             game_settings: GameSettings::default(),
             shutdown_flow: ShutdownFlow::default(),
@@ -139,6 +176,10 @@ impl Game {
         self.enemy_atlas = EnemyAtlas::load().await;
     }
 
+    pub async fn load_hit_vfx(&mut self) {
+        self.hit_vfx_atlas = HitVfxAtlas::load().await;
+    }
+
     pub async fn load_font(&mut self) {
         if let Ok(font_data) = load_file("assets/fonts/PixelifySans-Regular.ttf").await {
             self.font = load_ttf_font_from_bytes(&font_data).ok();
@@ -155,6 +196,13 @@ impl Game {
         self.sfx_blue_coin = load_sound("assets/audio/blue_coin.wav").await.ok();
         self.sfx_coin_bag = load_sound("assets/audio/coin_bag.wav").await.ok();
         self.sfx_use_potion = load_sound("assets/audio/use_potion.wav").await.ok();
+        self.sfx_punch_1 = load_sound("assets/audio/punch_1.wav").await.ok();
+        self.sfx_punch_2 = load_sound("assets/audio/punch_2.wav").await.ok();
+        self.sfx_sword_slash_1 = load_sound("assets/audio/sword_slash_1.wav").await.ok();
+        self.sfx_sword_slash_2 = load_sound("assets/audio/sword_slash_2.wav").await.ok();
+        self.sfx_sword_slash_3 = load_sound("assets/audio/sword_slash_3.wav").await.ok();
+        self.sfx_sword_slash_4 = load_sound("assets/audio/sword_slash_4.wav").await.ok();
+        self.sfx_sword_slash_finisher = load_sound("assets/audio/sword_slash_finisher.wav").await.ok();
     }
 
     /// Call after assets load. Loops intro menu music; stops gameplay music if any.
@@ -214,6 +262,25 @@ impl Game {
         }
     }
 
+    fn play_combat_sfx(&self, event: CombatSfxEvent) {
+        match event {
+            CombatSfxEvent::EnemyPunch => {
+                if macroquad::rand::gen_range(0, 2) == 0 {
+                    self.play_sfx(&self.sfx_punch_1);
+                } else {
+                    self.play_sfx(&self.sfx_punch_2);
+                }
+            }
+            CombatSfxEvent::PlayerSwingMiss => match macroquad::rand::gen_range(0, 3) {
+                0 => self.play_sfx(&self.sfx_sword_slash_1),
+                1 => self.play_sfx(&self.sfx_sword_slash_2),
+                _ => self.play_sfx(&self.sfx_sword_slash_4),
+            },
+            CombatSfxEvent::PlayerSwingHit => self.play_sfx(&self.sfx_sword_slash_3),
+            CombatSfxEvent::PlayerSwingFinisher => self.play_sfx(&self.sfx_sword_slash_finisher),
+        }
+    }
+
     pub async fn load_title_background(&mut self) {
         if let Ok(tex) = load_texture("assets/images/background.png").await {
             tex.set_filter(FilterMode::Linear);
@@ -234,6 +301,10 @@ impl Game {
         if let Ok(tex) = load_texture("assets/images/plate.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.pause_plate = Some(tex);
+        }
+        if let Ok(tex) = load_texture("assets/images/loadingBar.png").await {
+            tex.set_filter(FilterMode::Nearest);
+            self.hud_loading_bar = Some(tex);
         }
     }
 
@@ -450,8 +521,17 @@ impl Game {
             level.update(dt);
         }
 
+        if let Some(ref atlas) = self.hit_vfx_atlas {
+            for fx in &mut self.hit_vfx_instances {
+                fx.update(dt, atlas);
+            }
+            self.hit_vfx_instances.retain(HitVfxInstance::is_active);
+        }
+
         // Update player and check collisions
         let mut pickup_sfx: Vec<ItemType> = Vec::new();
+        let mut queued_vfx: Vec<(HitVfxKind, i32, i32, Direction)> = Vec::new();
+        let mut combat_sfx_events: Vec<CombatSfxEvent> = Vec::new();
         if let (Some(ref mut level), Some(ref mut player)) = (&mut self.level, &mut self.player) {
             player.update(dt, level, actions);
 
@@ -493,31 +573,6 @@ impl Game {
             }
 
             // ═══════════════════════════════════════════════════════════════════════════════
-            // COMBAT: Player attack → Enemy damage
-            // ═══════════════════════════════════════════════════════════════════════════════
-            if player.is_attacking {
-                let (attack_x, attack_y) = player.get_attack_position();
-                for enemy in &mut level.enemies {
-                    if enemy.is_alive() && enemy.grid_x == attack_x && enemy.grid_y == attack_y {
-                        enemy.take_damage(1); // 1 damage per hit
-                        player.is_attacking = false; // Reset attack after hit
-                        break; // Only hit one enemy per attack
-                    }
-                }
-            }
-
-            // ═══════════════════════════════════════════════════════════════════════════════
-            // COMBAT: Enemy → Player damage (contact damage)
-            // ═══════════════════════════════════════════════════════════════════════════════
-            for enemy in &level.enemies {
-                if enemy.is_alive() && enemy.grid_x == player.grid_x && enemy.grid_y == player.grid_y {
-                    if player.invincible_time <= 0.0 {
-                        player.take_damage(ENEMY_DAMAGE);
-                    }
-                }
-            }
-
-            // ═══════════════════════════════════════════════════════════════════════════════
             // ENEMY UPDATES: AI and movement
             // ═══════════════════════════════════════════════════════════════════════════════
             let player_pos = (player.grid_x, player.grid_y);
@@ -528,6 +583,63 @@ impl Game {
             for enemy in &mut level.enemies {
                 enemy.update_with_bounds(dt, player_pos, level_w, level_h, &level.tiles);
             }
+
+            // ═══════════════════════════════════════════════════════════════════════════════
+            // COMBAT: Player attack → Enemy damage (face-to-face melee)
+            // ═══════════════════════════════════════════════════════════════════════════════
+            // One resolve per swing via `melee_hit_pending` — do not rely on `is_attacking`,
+            // which can clear in the same frame as `start_attack` if `anim_timer` was stale.
+            if player.consume_melee_hit_pending() {
+                let (attack_x, attack_y) = player.get_attack_position();
+                queued_vfx.push((HitVfxKind::PlayerHit, attack_x, attack_y, player.facing));
+                let mut hit_enemy = false;
+
+                for enemy in &mut level.enemies {
+                    if !enemy.is_alive() {
+                        continue;
+                    }
+                    if enemy.grid_x == attack_x
+                        && enemy.grid_y == attack_y
+                        && enemy.facing == player.facing.opposite()
+                    {
+                        hit_enemy = true;
+                        let will_kill = enemy.hp <= 1;
+                        enemy.take_damage(1);
+                        if will_kill {
+                            combat_sfx_events.push(CombatSfxEvent::PlayerSwingFinisher);
+                        } else {
+                            combat_sfx_events.push(CombatSfxEvent::PlayerSwingHit);
+                        }
+                        break;
+                    }
+                }
+
+                if !hit_enemy {
+                    combat_sfx_events.push(CombatSfxEvent::PlayerSwingMiss);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════════════════════
+            // COMBAT: Enemy → Player damage (face-to-face melee + cooldown)
+            // ═══════════════════════════════════════════════════════════════════════════════
+            for enemy in &mut level.enemies {
+                if !enemy.is_alive() || enemy.attack_cooldown > 0.0 {
+                    continue;
+                }
+                let (attack_x, attack_y) = enemy.get_attack_position();
+                if attack_x == player.grid_x
+                    && attack_y == player.grid_y
+                    && player.facing == enemy.facing.opposite()
+                {
+                    if player.invincible_time <= 0.0 {
+                        player.take_damage(ENEMY_DAMAGE);
+                    }
+                    enemy.attack_cooldown = ENEMY_ATTACK_COOLDOWN;
+                    queued_vfx.push((HitVfxKind::EnemyHit, attack_x, attack_y, enemy.facing));
+                    combat_sfx_events.push(CombatSfxEvent::EnemyPunch);
+                }
+            }
+
             // Remove enemies whose death animation has finished.
             level.enemies.retain(|e| e.state != crate::world::EnemyState::Dead);
 
@@ -545,6 +657,12 @@ impl Game {
 
         for k in pickup_sfx {
             self.play_item_pickup_sfx(k);
+        }
+        for (kind, x, y, facing) in queued_vfx {
+            self.spawn_hit_vfx(kind, x, y, facing);
+        }
+        for event in combat_sfx_events {
+            self.play_combat_sfx(event);
         }
     }
 
@@ -784,6 +902,12 @@ impl Game {
                 player.draw(cam_x, cam_y);
             }
 
+            if let Some(ref atlas) = self.hit_vfx_atlas {
+                for fx in &self.hit_vfx_instances {
+                    fx.draw(cam_x, cam_y, atlas);
+                }
+            }
+
             // Draw HUD (hearts, coins, level label)
             self.draw_hud();
         }
@@ -799,14 +923,23 @@ impl Game {
             let coin_dims = measure_text(&coin_label, self.ui_font.as_ref(), coin_font, 1.0);
             let row_gap = 8.0;
             let outer_pad = 14.0;
+            let atk_bar_w = HUD_ATTACK_BAR_FRAME_W;
+            let atk_bar_h = HUD_ATTACK_BAR_FRAME_H;
+            let atk_label_font = 14_u16;
+            let atk_label = if player.attack_ready_percent() >= 0.999 {
+                "ATK READY"
+            } else {
+                "ATK RECHARGE"
+            };
+            let atk_label_dims = measure_text(atk_label, self.ui_font.as_ref(), atk_label_font, 1.0);
 
             let hearts_row_w = if max_hearts > 0 {
                 (max_hearts as f32 - 1.0) * heart_spacing + heart_size
             } else {
                 0.0
             };
-            let content_w = hearts_row_w.max(coin_dims.width);
-            let content_h = heart_size + row_gap + coin_dims.height;
+            let content_w = hearts_row_w.max(coin_dims.width).max(atk_bar_w);
+            let content_h = heart_size + row_gap + coin_dims.height + row_gap + atk_bar_h + atk_label_dims.height + 4.0;
 
             let panel_w = content_w + outer_pad * 2.0;
             let panel_h = content_h + outer_pad * 2.0 + 10.0;
@@ -918,6 +1051,45 @@ impl Game {
                 self.ui_font.as_ref(),
                 Color::from_rgba(255, 220, 80, 255),
                 Color::from_rgba(30, 20, 8, 255),
+            );
+
+            let atk_ready = player.attack_ready_percent();
+            let atk_bar_x = content_left + (content_w - atk_bar_w) / 2.0;
+            let atk_bar_y = block_top + heart_size + row_gap + coin_dims.height + row_gap + 6.0;
+
+            if let Some(ref frame) = self.hud_loading_bar {
+                draw_texture_ex(
+                    frame,
+                    atk_bar_x,
+                    atk_bar_y,
+                    WHITE,
+                    DrawTextureParams {
+                        dest_size: Some(vec2(atk_bar_w, atk_bar_h)),
+                        ..Default::default()
+                    },
+                );
+            } else {
+                draw_rectangle(atk_bar_x, atk_bar_y, atk_bar_w, atk_bar_h, Color::from_rgba(18, 20, 28, 220));
+                draw_rectangle_lines(atk_bar_x, atk_bar_y, atk_bar_w, atk_bar_h, 2.0, Color::from_rgba(180, 190, 220, 180));
+            }
+
+            let fill_x = atk_bar_x + HUD_ATTACK_BAR_INSET_X;
+            let fill_y = atk_bar_y + HUD_ATTACK_BAR_INSET_Y;
+            let fill_w = HUD_ATTACK_BAR_FILL_W * atk_ready;
+            let fill_h = HUD_ATTACK_BAR_FILL_H;
+            draw_rectangle(fill_x, fill_y, fill_w, fill_h, Color::from_rgba(48, 130, 255, 245));
+            draw_rectangle(fill_x, fill_y, fill_w, fill_h * 0.33, Color::from_rgba(136, 190, 255, 190));
+
+            let atk_label_x = content_left + (content_w - atk_label_dims.width) / 2.0;
+            let atk_label_y = atk_bar_y + atk_bar_h + atk_label_dims.offset_y + 4.0;
+            draw_shadowed_text(
+                atk_label,
+                atk_label_x,
+                atk_label_y,
+                atk_label_font,
+                self.ui_font.as_ref(),
+                Color::from_rgba(200, 224, 255, 255),
+                Color::from_rgba(22, 30, 56, 255),
             );
 
             let level_text = format!("LEVEL {}", self.current_level);

@@ -1,4 +1,5 @@
 pub mod game;
+pub mod hit_vfx;
 pub mod settings;
 pub mod shutdown;
 

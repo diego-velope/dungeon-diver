@@ -53,11 +53,13 @@ async fn main() {
     game.load_items_atlas().await;
     splash_html::set_loading_progress(42.0);
     game.load_enemy_atlas().await;
-    splash_html::set_loading_progress(56.0);
+    splash_html::set_loading_progress(54.0);
+    game.load_hit_vfx().await;
+    splash_html::set_loading_progress(64.0);
     game.load_font().await;
-    splash_html::set_loading_progress(70.0);
+    splash_html::set_loading_progress(76.0);
     game.load_audio().await;
-    splash_html::set_loading_progress(85.0);
+    splash_html::set_loading_progress(88.0);
     game.load_title_background().await;
     splash_html::set_loading_progress(100.0);
     game.enter_title_music();
