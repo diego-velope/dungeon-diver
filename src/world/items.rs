@@ -25,6 +25,8 @@ pub struct ItemsAtlas {
     // Potions (dg_gathering_free_ver)
     pub potion_big: Texture2D,
     pub potion_small: Texture2D,
+    pub shield_potion_big: Texture2D,
+    pub shield_potion_small: Texture2D,
 
     // Torches (dg_gathering_free_ver)
     pub torch_left: Texture2D,
@@ -45,6 +47,8 @@ impl ItemsAtlas {
         // Load potions
         let potion_big = load_texture("assets/dg_gathering_free_ver/potion_big_red_1.png").await.ok()?;
         let potion_small = load_texture("assets/dg_gathering_free_ver/potion_small_red_2.png").await.ok()?;
+        let shield_potion_big = load_texture("assets/dg_gathering_free_ver/Potion 3.png").await.ok()?;
+        let shield_potion_small = load_texture("assets/dg_gathering_free_ver/Potion 4.png").await.ok()?;
 
         // Load torches
         let torch_left = load_texture("assets/dg_gathering_free_ver/torch_left.png").await.ok()?;
@@ -99,6 +103,10 @@ impl ItemsAtlas {
         potion_big.set_filter(FilterMode::Nearest);
         let potion_small = potion_small;
         potion_small.set_filter(FilterMode::Nearest);
+        let shield_potion_big = shield_potion_big;
+        shield_potion_big.set_filter(FilterMode::Nearest);
+        let shield_potion_small = shield_potion_small;
+        shield_potion_small.set_filter(FilterMode::Nearest);
         let torch_left = torch_left;
         torch_left.set_filter(FilterMode::Nearest);
         let torch_right = torch_right;
@@ -118,6 +126,8 @@ impl ItemsAtlas {
             heart_empty,
             potion_big,
             potion_small,
+            shield_potion_big,
+            shield_potion_small,
             torch_left,
             torch_right,
             torch_top,
@@ -250,6 +260,8 @@ pub enum ItemType {
     Potion,
     BigPotion,
     SmallPotion,
+    ShieldPotion,
+    BigShieldPotion,
 }
 
 /// Collectible item on the level
@@ -362,17 +374,22 @@ impl Item {
                 }
             }
             ItemType::Potion => {
-                // Scale factor based on TILE_SIZE (base art is 16px)
-                let scale = TILE_SIZE / 16.0;  // 2.0 at 32px tiles, 4.0 at 64px tiles
-                // Health potion
-                let potion_color = Color { r: 0.9, g: 0.2, b: 0.4, a: 1.0 };
-                // Bottle
-                draw_rectangle(screen_x - 6.0 * scale, screen_y - 10.0 * scale, 16.0 * scale, 24.0 * scale, potion_color);
-                draw_rectangle(screen_x - 7.0 * scale, screen_y + 10.0 * scale, 18.0 * scale, 5.0 * scale, potion_color);
-                // Cork
-                draw_rectangle(screen_x - 5.0 * scale, screen_y - 15.0 * scale, 10.0 * scale, 5.0 * scale, Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 });
-                // Shine
-                draw_circle(screen_x + 3.0, screen_y - 5.0, 2.0, Color { r: 1.0, g: 0.8, b: 0.8, a: 0.8 });
+                if let Some(atlas) = atlas {
+                    draw_texture_ex(
+                        &atlas.potion_big,
+                        dx,
+                        dy,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(TILE_SIZE, TILE_SIZE)),
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    let scale = TILE_SIZE / 16.0;
+                    let potion_color = Color { r: 0.9, g: 0.2, b: 0.4, a: 1.0 };
+                    draw_rectangle(screen_x - 6.0 * scale, screen_y - 10.0 * scale, 16.0 * scale, 24.0 * scale, potion_color);
+                }
             }
             ItemType::BigPotion => {
                 if let Some(atlas) = atlas {
@@ -414,6 +431,44 @@ impl Item {
                     draw_rectangle(screen_x - 3.0 * scale, screen_y - 10.0 * scale, 8.0 * scale, 4.0 * scale, Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 });
                 }
             }
+            ItemType::ShieldPotion => {
+                if let Some(atlas) = atlas {
+                    draw_texture_ex(
+                        &atlas.shield_potion_small,
+                        dx,
+                        dy,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(TILE_SIZE, TILE_SIZE)),
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    let scale = TILE_SIZE / 16.0;
+                    let potion_color = Color { r: 0.2, g: 0.5, b: 0.95, a: 1.0 };
+                    draw_rectangle(screen_x - 4.0 * scale, screen_y - 6.0 * scale, 10.0 * scale, 16.0 * scale, potion_color);
+                    draw_rectangle(screen_x - 3.0 * scale, screen_y - 10.0 * scale, 8.0 * scale, 4.0 * scale, Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 });
+                }
+            }
+            ItemType::BigShieldPotion => {
+                if let Some(atlas) = atlas {
+                    draw_texture_ex(
+                        &atlas.shield_potion_big,
+                        dx,
+                        dy,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(TILE_SIZE, TILE_SIZE)),
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    let scale = TILE_SIZE / 16.0;
+                    let potion_color = Color { r: 0.2, g: 0.5, b: 0.95, a: 1.0 };
+                    draw_rectangle(screen_x - 8.0 * scale, screen_y - 12.0 * scale, 20.0 * scale, 30.0 * scale, potion_color);
+                    draw_rectangle(screen_x - 6.0 * scale, screen_y - 18.0 * scale, 12.0 * scale, 6.0 * scale, Color { r: 0.6, g: 0.4, b: 0.2, a: 1.0 });
+                }
+            }
         }
     }
 
@@ -429,6 +484,8 @@ impl Item {
             ItemType::Potion => POTION_HEAL,
             ItemType::BigPotion => POTION_HEAL * 2,  // Big potion heals 2 HP
             ItemType::SmallPotion => POTION_HEAL,    // Small potion heals 1 HP
+            ItemType::ShieldPotion => 1,
+            ItemType::BigShieldPotion => 3,
         }
     }
 }

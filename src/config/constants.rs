@@ -45,6 +45,8 @@ pub const SCREEN_TILES_H: i32 = (SCREEN_H / TILE_SIZE) as i32;  // 11 at 64px
 //
 pub const LEVEL1_W: usize = 16;
 pub const LEVEL1_H: usize = 16;
+pub const LEVEL_LARGE_W: usize = 20;
+pub const LEVEL_LARGE_H: usize = 20;
 
 // ============================================================================
 // COLORS - LEVEL 1: Tutorial Dungeon (Gray/Blue Theme)
@@ -140,6 +142,7 @@ pub const MAX_HP: i32 = 6;
 pub const STARTING_HP: i32 = 6;
 
 pub const POTION_HEAL: i32 = 1;  // HP restored by potion
+pub const MAX_SHIELD_CHARGES: i32 = 3;
 // Gold coin = 1 unit, blue coin = 2 units (see ItemType::BlueCoin).
 pub const COIN_VALUE: i32 = 1;
 
@@ -152,6 +155,19 @@ pub const ENEMY_MOVE_INTERVAL: f32 = 0.5;       // Move every 0.5 seconds
 pub const ENEMY_ACTIVATION_RANGE: i32 = 5;      // Only chase if within 5 tiles
 pub const ENEMY_DAMAGE: i32 = 1;                // Zombies deal 1 damage on contact
 pub const ENEMY_ATTACK_COOLDOWN: f32 = 3.0;     // Seconds between enemy attacks
+pub const BIG_ZOMBIE_HP: i32 = 5;
+pub const BIG_ZOMBIE_MOVE_INTERVAL: f32 = 0.7;
+pub const BIG_ZOMBIE_DAMAGE: i32 = 1;
+pub const BIG_ZOMBIE_ATTACK_COOLDOWN: f32 = 3.5;
+pub const BIG_ZOMBIE_ACTIVATION_RANGE: i32 = 5;
+pub const BIG_ZOMBIE_DISPLAY_SIZE: f32 = TILE_SIZE * 1.75;
+
+pub const BIG_DEMON_HP: i32 = 4;
+pub const BIG_DEMON_MOVE_INTERVAL: f32 = 0.35;
+pub const BIG_DEMON_DAMAGE: i32 = 2;
+pub const BIG_DEMON_ATTACK_COOLDOWN: f32 = 2.5;
+pub const BIG_DEMON_ACTIVATION_RANGE: i32 = 7;
+pub const BIG_DEMON_DISPLAY_SIZE: f32 = TILE_SIZE * 1.8;
 
 // ============================================================================
 // COMBAT VFX
@@ -171,6 +187,10 @@ pub const HUD_ATTACK_BAR_INSET_X: f32 = 14.0;
 pub const HUD_ATTACK_BAR_INSET_Y: f32 = 11.0;
 pub const HUD_ATTACK_BAR_FILL_W: f32 = 192.0;
 pub const HUD_ATTACK_BAR_FILL_H: f32 = 25.0;
+pub const HUD_SHIELD_BAR_FRAME_W: f32 = 150.0;
+pub const HUD_SHIELD_BAR_FRAME_H: f32 = 36.0;
+pub const HUD_SHIELD_BAR_INSET_X: f32 = 11.0;
+pub const HUD_SHIELD_BAR_INSET_Y: f32 = 8.0;
 
 // ============================================================================
 // CAMERA

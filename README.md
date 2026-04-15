@@ -55,6 +55,53 @@ Navigate with D-Pad Up/Down, select with OK/Enter.
 | 9 | Sky Fortress | Wind gusts |
 | 10 | Void Throne | Boss fight |
 
+## Level Design
+
+Level layouts are authored as character grids in `src/world/level.rs`. The parser reads some
+tokens as 2- or 3-character combinations first, then falls back to single characters.
+
+### Multi-character tokens
+
+| Token | Meaning |
+|-------|---------|
+| `SSP` | Small shield potion item (`ShieldPotion`) |
+| `BSP` | Big shield potion item (`BigShieldPotion`) |
+| `BP` | Big health potion item (`BigPotion`) |
+| `SP` | Small health potion item (`SmallPotion`) |
+| `LT` | Left-facing torch |
+| `RT` | Right-facing torch |
+| `#|` | Right wall edge (`SolidWallRight`) |
+| `|#` | Left wall edge (`SolidWallLeft`) |
+| `#-` | Bottom wall segment (`SolidWallBottom`) |
+| `#+` | Top wall segment (`SolidWallTop`) |
+| `_|` | Bottom cap right (`BottomCapRight`) |
+| `|_` | Bottom cap left (`BottomCapLeft`) |
+
+### Single-character tokens
+
+| Char | Meaning |
+|------|---------|
+| `@` | Player spawn |
+| `E` | Exit door |
+| `.` | Floor |
+| `#` | Solid wall |
+| `_` | Bottom cap wall |
+| `|` | Right face wall |
+| `^` | Spike tile |
+| `O` | Pit tile |
+| `C` | Coin |
+| `B` | Blue coin (single-char) |
+| `G` | Coin bag |
+| `P` | Health potion (`Potion`) |
+| `V` | Breakable vase (may contain loot) |
+| `T` | Top-facing torch |
+| `H` | Chest |
+| `Z` | Zombie enemy |
+| `W` | Big zombie enemy |
+| `D` | Big demon enemy |
+
+Any unrecognized character is treated as floor.
+
 ## Lives System
 
 - Start with **3 lives**

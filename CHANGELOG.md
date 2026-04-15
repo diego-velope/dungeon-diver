@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-04-15
+
+#### Added
+
+- **Levels 4–10** — Seven new handcrafted maps (`Level::load_level_4` … `load_level_10`) so the full campaign is **10 levels**. Levels **4–6** stay on the **16×16** grid; levels **7–10** use the **20×20** grid. Progression chains 1 → 10 in `Game`; layouts introduce **spike** (`^`) and **pit** (`O`) tiles, **shield potions** (`SSP` small / `BSP` big), and **Big Zombie** / **Big Demon** enemies (`W` / `D`) in addition to standard zombies (`Z`).
+- **Victory screen** — Clearing **level 10** (exit with key after the usual level-complete transition) enters `GameState::Victory`: full-screen `assets/images/winner_screen.png`, two plate-style headings (“Thanks for playing!”, “You have found the treasure!”), and a stats plate with **enemies killed**, **healing potions taken** (`P` / `BP` / `SP` pickups), **shield potions taken** (`SSP` / `BSP` pickups), and **total coins**. **Play again** runs `start()` from level 1 (stats and coins reset); **Main menu** returns to the title screen with the same button assets and focus behavior as the main menu.
+- **Run stat counters** on `Game` — `run_enemies_killed` increments on killing blows; potion counters increment per pickup of the matching item types.
+- **README — Level Design** — Legend for ASCII layout tokens used in `src/world/level.rs` (single characters, `SSP` / `BSP` / `BP` / `SP`, torches, wall pairs, etc.).
+
+#### Changed
+
+- **Victory UI layout** — Stats plate is positioned **above** **Play again** / **Main menu** (anchored from the bottom) so the knight stays visible; heading plates stay near the top. Text in plates is aligned more evenly (single-line optical center using font metrics; stats block given a small downward nudge so lines sit visually centered in the plate).
+- **Spike traps** — Cycle slowed and **desynced per tile** (phase offset from grid position); active/safe timing and damage check match the staggered animation.
+- **Between-level persistence** — Player **HP**, **max HP**, and **shield charges** are preserved when loading the next level (`load_level_and_spawn_player`).
+- **HUD** — Hearts and shield charges in a **compact top-left plate**; **coins** and **attack cooldown bar** at **bottom-left**; empty shield segments use a **silver** tint; charged shields match attack-bar blue; incremental size and corner positioning tweaks.
+- **Standard potion pickup art** — `ItemType::Potion` (layout `P`) draws the **`potion_big`** sprite instead of procedural rectangles when the items atlas is loaded.
+- **Campaign entry** — `start()` begins at **level 1** with a fresh run (coins and run stats reset).
+
 ### Added
 
 - **TV platform layer (PAL)** — `web/pal`: platform detection (Tizen, webOS, Vizio, Fire TV, Android TV, browser), per-platform key maps, Tizen media-key registration, and host shutdown hooks (e.g. webOS `platformBack`, Tizen app exit, Android `AndroidJsInterface.shutdown`).
