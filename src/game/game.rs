@@ -28,6 +28,8 @@ pub enum GameState {
     Inventory,
     GameOver,
     LevelComplete,
+    /// Beat level 10 — full-screen win + stats.
+    Victory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,11 @@ pub struct Game {
     pub screen_flash: f32,
     pub coins: i32,
     current_level: u8,
+    /// Run stats (reset when starting a new game from the title / Play again).
+    run_enemies_killed: i32,
+    run_healing_potions: i32,
+    run_shield_potions: i32,
+    win_menu_selection: usize,
 
     // Level-complete transition timer (for door "pulse" -> load next).
     level_complete_timer: f32,
@@ -73,6 +80,8 @@ pub struct Game {
     pub ui_font: Option<Font>,
     /// Title screen background
     title_background: Option<Texture2D>,
+    /// Full-screen art after beating level 10.
+    winner_screen: Option<Texture2D>,
     title_btn_focused: Option<Texture2D>,
     title_btn_unfocused: Option<Texture2D>,
     title_btn_clicked: Option<Texture2D>,
@@ -83,6 +92,7 @@ pub struct Game {
     /// Combat hit effects.
     hit_vfx_atlas: Option<HitVfxAtlas>,
     hit_vfx_instances: Vec<HitVfxInstance>,
+    spike_timer: f32,
     // --- Audio and Settings ---
     /// Looped on title / main menu (`intro_music.mp3`).
     pub intro_music: Option<Sound>,
@@ -127,6 +137,10 @@ impl Game {
             screen_flash: 0.0,
             coins: 0,
             current_level: 1,
+            run_enemies_killed: 0,
+            run_healing_potions: 0,
+            run_shield_potions: 0,
+            win_menu_selection: 0,
             level_complete_timer: 0.0,
             level_complete_duration: 1.2,
             player_idle_tex: None,
@@ -137,6 +151,7 @@ impl Game {
             font: None,
             ui_font: None,
             title_background: None,
+            winner_screen: None,
             title_btn_focused: None,
             title_btn_unfocused: None,
             title_btn_clicked: None,
@@ -144,6 +159,7 @@ impl Game {
             hud_loading_bar: None,
             hit_vfx_atlas: None,
             hit_vfx_instances: Vec::new(),
+            spike_timer: 0.0,
             intro_music: None,
             gameplay_music: None,
             sfx_coin: None,
@@ -256,7 +272,7 @@ impl Game {
             ItemType::Coin => self.play_sfx(&self.sfx_coin),
             ItemType::BlueCoin => self.play_sfx(&self.sfx_blue_coin),
             ItemType::CoinBag => self.play_sfx(&self.sfx_coin_bag),
-            ItemType::Potion | ItemType::BigPotion | ItemType::SmallPotion => {
+            ItemType::Potion | ItemType::BigPotion | ItemType::SmallPotion | ItemType::ShieldPotion | ItemType::BigShieldPotion => {
                 self.play_sfx(&self.sfx_use_potion)
             }
         }
@@ -306,6 +322,10 @@ impl Game {
             tex.set_filter(FilterMode::Nearest);
             self.hud_loading_bar = Some(tex);
         }
+        if let Ok(tex) = load_texture("assets/images/winner_screen.png").await {
+            tex.set_filter(FilterMode::Linear);
+            self.winner_screen = Some(tex);
+        }
     }
 
     /// Load player sprites (call before starting game)
@@ -325,6 +345,11 @@ impl Game {
 
     /// Start a new game
     pub fn start(&mut self) {
+        self.run_enemies_killed = 0;
+        self.run_healing_potions = 0;
+        self.run_shield_potions = 0;
+        self.win_menu_selection = 0;
+
         self.level = Some(Level::load_level_1());
         let level = self.level.as_ref().unwrap();
 
@@ -349,6 +374,7 @@ impl Game {
         self.coins = 0;
         self.current_level = 1;
         self.level_complete_timer = 0.0;
+        self.spike_timer = 0.0;
 
         self.enter_gameplay_music();
     }
@@ -394,6 +420,9 @@ impl Game {
             GameState::LevelComplete => {
                 self.update_level_complete(&actions, gameplay_dt);
             }
+            GameState::Victory => {
+                self.update_victory(&actions);
+            }
         }
 
         // Update camera to follow player
@@ -401,6 +430,7 @@ impl Game {
             self.camera.set_target(player.x, player.y);
         }
         self.camera.update(dt);
+        self.spike_timer += dt;
         if let Some(ref level) = self.level {
             let level_w = level.width as f32 * TILE_SIZE;
             let level_h = level.height as f32 * TILE_SIZE;
@@ -551,13 +581,25 @@ impl Game {
                     let kind = item.item_type;
                     let value = item.collect();
                     pickup_sfx.push(kind);
-                    if value > 0 {
-                        self.coins += value;
-                        self.screen_flash = 0.2; // Small flash on pickup
-                    }
-                    // Handle potion healing
-                    if value == POTION_HEAL {
-                        player.heal(value);
+                    match kind {
+                        ItemType::Coin | ItemType::BlueCoin | ItemType::CoinBag => {
+                            if value > 0 {
+                                self.coins += value;
+                                self.screen_flash = 0.2; // Small flash on pickup
+                            }
+                        }
+                        ItemType::Potion | ItemType::BigPotion | ItemType::SmallPotion => {
+                            if value > 0 {
+                                player.heal(value);
+                                self.run_healing_potions += 1;
+                            }
+                        }
+                        ItemType::ShieldPotion | ItemType::BigShieldPotion => {
+                            if value > 0 {
+                                player.add_shield(value);
+                                self.run_shield_potions += 1;
+                            }
+                        }
                     }
                 }
             }
@@ -606,6 +648,7 @@ impl Game {
                         let will_kill = enemy.hp <= 1;
                         enemy.take_damage(1);
                         if will_kill {
+                            self.run_enemies_killed += 1;
                             combat_sfx_events.push(CombatSfxEvent::PlayerSwingFinisher);
                         } else {
                             combat_sfx_events.push(CombatSfxEvent::PlayerSwingHit);
@@ -632,12 +675,19 @@ impl Game {
                     && player.facing == enemy.facing.opposite()
                 {
                     if player.invincible_time <= 0.0 {
-                        player.take_damage(ENEMY_DAMAGE);
+                        player.take_damage(enemy.damage_for());
                     }
-                    enemy.attack_cooldown = ENEMY_ATTACK_COOLDOWN;
+                    enemy.attack_cooldown = enemy.attack_cooldown_for();
                     queued_vfx.push((HitVfxKind::EnemyHit, attack_x, attack_y, enemy.facing));
                     combat_sfx_events.push(CombatSfxEvent::EnemyPunch);
                 }
+            }
+
+            let spike_offset = ((player.grid_x * 7 + player.grid_y * 13) % 4) as f32 * 0.5;
+            let spike_local = (self.spike_timer + spike_offset) % 3.0;
+            let spikes_active = spike_local < 1.0;
+            if spikes_active && level.get_tile(player.grid_x, player.grid_y) == Tile::Spikes {
+                player.take_damage(1);
             }
 
             // Remove enemies whose death animation has finished.
@@ -752,14 +802,64 @@ impl Game {
         }
 
         if self.level_complete_timer <= 0.0 {
+            if self.current_level == 10 {
+                self.state = GameState::Victory;
+                self.win_menu_selection = 0;
+                self.enter_title_music();
+                return;
+            }
             // Load next level; keep coin score persistent.
             self.current_level = self.current_level.saturating_add(1);
             let next = match self.current_level {
                 2 => Level::load_level_2(),
                 3 => Level::load_level_3(),
-                _ => Level::load_level_3(), // fallback for level 4+
+                4 => Level::load_level_4(),
+                5 => Level::load_level_5(),
+                6 => Level::load_level_6(),
+                7 => Level::load_level_7(),
+                8 => Level::load_level_8(),
+                9 => Level::load_level_9(),
+                10 => Level::load_level_10(),
+                _ => {
+                    self.state = GameState::Title;
+                    self.enter_title_music();
+                    return;
+                }
             };
             self.load_level_and_spawn_player(next);
+        }
+    }
+
+    fn update_victory(&mut self, actions: &[InputAction]) {
+        const MENU_ITEMS: [&str; 2] = ["PLAY AGAIN", "MAIN MENU"];
+        for &action in actions {
+            match action {
+                InputAction::MoveDown => {
+                    self.win_menu_selection = (self.win_menu_selection + 1) % MENU_ITEMS.len();
+                }
+                InputAction::MoveUp => {
+                    self.win_menu_selection = if self.win_menu_selection == 0 {
+                        MENU_ITEMS.len() - 1
+                    } else {
+                        self.win_menu_selection - 1
+                    };
+                }
+                InputAction::Confirm | InputAction::Attack => {
+                    self.menu_click_index = Some(self.win_menu_selection);
+                    self.menu_click_timer = 0.12;
+                    match self.win_menu_selection {
+                        0 => self.start(),
+                        1 => {
+                            self.state = GameState::Title;
+                            self.player = None;
+                            self.level = None;
+                            self.enter_title_music();
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -767,10 +867,23 @@ impl Game {
         let spawn_x = level.spawn_x;
         let spawn_y = level.spawn_y;
 
+        let prev_hp = self.player.as_ref().map(|p| p.hp);
+        let prev_max_hp = self.player.as_ref().map(|p| p.max_hp);
+        let prev_shields = self.player.as_ref().map(|p| p.shield_charges);
+
         self.level = Some(level);
         let mut player = Player::new(spawn_x, spawn_y);
 
-        // Re-apply preloaded sprites if available (native/wasm asset load).
+        if let Some(hp) = prev_hp {
+            player.hp = hp;
+        }
+        if let Some(max_hp) = prev_max_hp {
+            player.max_hp = max_hp;
+        }
+        if let Some(shields) = prev_shields {
+            player.shield_charges = shields;
+        }
+
         if let (Some(ref idle), Some(ref run)) = (&self.player_idle_tex, &self.player_run_tex) {
             player.set_sprites(idle.clone(), run.clone());
         }
@@ -817,6 +930,9 @@ impl Game {
             GameState::LevelComplete => {
                 self.draw_playing(); // Draw game behind text
                 self.draw_level_complete();
+            }
+            GameState::Victory => {
+                self.draw_victory();
             }
         }
 
@@ -886,7 +1002,7 @@ impl Game {
             let (cam_x, cam_y) = self.camera.get_render_offset();
 
             // Draw level (textured terrain if atlases loaded)
-            level.draw(cam_x, cam_y, self.terrain.as_ref(), self.items_atlas.as_ref());
+            level.draw(cam_x, cam_y, self.terrain.as_ref(), self.items_atlas.as_ref(), self.spike_timer);
 
             // Draw enemies (behind player)
             if let Some(ref atlas) = self.enemy_atlas {
@@ -915,186 +1031,149 @@ impl Game {
 
     fn draw_hud(&self) {
         if let Some(ref player) = self.player {
+            let font = self.ui_font.as_ref();
+            let atlas = self.items_atlas.as_ref();
+
+            // ── TOP-LEFT: compact panel with hearts (row 1) + shield pills (row 2) ──
             let heart_size = 32.0;
-            let heart_spacing = 36.0;
+            let heart_gap = 6.0;
             let max_hearts = player.max_hp / 2;
-            let coin_font = 24_u16;
-            let coin_label = format!("COINS  {}", self.coins);
-            let coin_dims = measure_text(&coin_label, self.ui_font.as_ref(), coin_font, 1.0);
-            let row_gap = 8.0;
-            let outer_pad = 14.0;
-            let atk_bar_w = HUD_ATTACK_BAR_FRAME_W;
-            let atk_bar_h = HUD_ATTACK_BAR_FRAME_H;
-            let atk_label_font = 14_u16;
-            let atk_label = if player.attack_ready_percent() >= 0.999 {
-                "ATK READY"
-            } else {
-                "ATK RECHARGE"
-            };
-            let atk_label_dims = measure_text(atk_label, self.ui_font.as_ref(), atk_label_font, 1.0);
-
-            let hearts_row_w = if max_hearts > 0 {
-                (max_hearts as f32 - 1.0) * heart_spacing + heart_size
-            } else {
-                0.0
-            };
-            let content_w = hearts_row_w.max(coin_dims.width).max(atk_bar_w);
-            let content_h = heart_size + row_gap + coin_dims.height + row_gap + atk_bar_h + atk_label_dims.height + 4.0;
-
-            let panel_w = content_w + outer_pad * 2.0;
-            let panel_h = content_h + outer_pad * 2.0 + 10.0;
-            let panel_x = 0.0;
-            let panel_y = 0.0;
-
-            if let Some(ref plate) = self.pause_plate {
-                draw_texture_ex(
-                    plate,
-                    panel_x,
-                    panel_y,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(vec2(panel_w, panel_h)),
-                        ..Default::default()
-                    },
-                );
-            } else {
-                draw_rectangle(
-                    panel_x,
-                    panel_y,
-                    panel_w,
-                    panel_h,
-                    Color::from_rgba(12, 14, 22, 200),
-                );
-                draw_rectangle_lines(
-                    panel_x,
-                    panel_y,
-                    panel_w,
-                    panel_h,
-                    2.0,
-                    Color::from_rgba(200, 200, 220, 120),
-                );
-            }
-
-            let content_left = panel_x + (panel_w - content_w) / 2.0;
-            let block_top = panel_y + outer_pad;
-
-            // Hearts UI: health is tracked in half-hearts.
             let half_hp = player.hp.clamp(0, player.max_hp);
             let full_hearts = half_hp / 2;
             let has_half = (half_hp % 2) == 1;
 
-            let atlas = self.items_atlas.as_ref();
-            let hearts_left = content_left + (content_w - hearts_row_w) / 2.0;
-            let hx0 = hearts_left + heart_size / 2.0;
-            let hy = block_top + heart_size / 2.0;
-            for i in 0..max_hearts {
-                let i_f = i as f32;
-                let x_center = hx0 + i_f * heart_spacing;
-                let y_center = hy;
-                let top_left_x = x_center - heart_size / 2.0;
-                let top_left_y = y_center - heart_size / 2.0;
+            let shield_bar_w = 46.0;
+            let shield_bar_h = 18.0;
+            let shield_gap = 8.0;
+            let shield_count = MAX_SHIELD_CHARGES as usize;
 
-                if let Some(atlas) = atlas {
-                    if i < full_hearts {
-                        draw_texture_ex(
-                            &atlas.heart_full,
-                            top_left_x,
-                            top_left_y,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(vec2(heart_size, heart_size)),
-                                ..Default::default()
-                            },
-                        );
+            let pad = 12.0;
+            let inner_row_w_hearts = max_hearts as f32 * heart_size + (max_hearts - 1).max(0) as f32 * heart_gap;
+            let inner_row_w_shields = shield_count as f32 * shield_bar_w + (shield_count - 1).max(0) as f32 * shield_gap;
+            let inner_w = inner_row_w_hearts.max(inner_row_w_shields);
+            let row_gap = 4.0;
+            let inner_h = heart_size + row_gap + shield_bar_h;
+
+            let panel_w = inner_w + pad * 2.0;
+            let panel_h = inner_h + pad * 2.0;
+            let panel_x = 4.0;
+            let panel_y = 4.0;
+
+            if let Some(ref plate) = self.pause_plate {
+                draw_texture_ex(plate, panel_x, panel_y, WHITE, DrawTextureParams {
+                    dest_size: Some(vec2(panel_w, panel_h)),
+                    ..Default::default()
+                });
+            } else {
+                draw_rectangle(panel_x, panel_y, panel_w, panel_h, Color::from_rgba(12, 14, 22, 200));
+                draw_rectangle_lines(panel_x, panel_y, panel_w, panel_h, 2.0, Color::from_rgba(200, 200, 220, 120));
+            }
+
+            let hearts_x0 = panel_x + (panel_w - inner_row_w_hearts) / 2.0;
+            let hearts_y = panel_y + pad;
+            for i in 0..max_hearts {
+                let hx = hearts_x0 + i as f32 * (heart_size + heart_gap);
+                if let Some(a) = atlas {
+                    let tex = if i < full_hearts {
+                        &a.heart_full
                     } else if i == full_hearts && has_half {
-                        draw_texture_ex(
-                            &atlas.heart_half,
-                            top_left_x,
-                            top_left_y,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(vec2(heart_size, heart_size)),
-                                ..Default::default()
-                            },
-                        );
+                        &a.heart_half
                     } else {
-                        draw_texture_ex(
-                            &atlas.heart_empty,
-                            top_left_x,
-                            top_left_y,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(vec2(heart_size, heart_size)),
-                                ..Default::default()
-                            },
-                        );
-                    }
+                        &a.heart_empty
+                    };
+                    draw_texture_ex(tex, hx, hearts_y, WHITE, DrawTextureParams {
+                        dest_size: Some(vec2(heart_size, heart_size)),
+                        ..Default::default()
+                    });
                 } else {
+                    let cx = hx + heart_size / 2.0;
+                    let cy = hearts_y + heart_size / 2.0;
                     if i < full_hearts {
-                        draw_heart(x_center, y_center, heart_size, LEVEL1_PALETTE.accent);
+                        draw_heart(cx, cy, heart_size, LEVEL1_PALETTE.accent);
                     } else if i == full_hearts && has_half {
-                        let half_color = Color { r: LEVEL1_PALETTE.accent.r, g: LEVEL1_PALETTE.accent.g, b: LEVEL1_PALETTE.accent.b, a: 0.6 };
-                        draw_heart(x_center, y_center, heart_size, half_color);
+                        draw_heart(cx, cy, heart_size, Color { r: LEVEL1_PALETTE.accent.r, g: LEVEL1_PALETTE.accent.g, b: LEVEL1_PALETTE.accent.b, a: 0.6 });
                     } else {
-                        draw_heart_outline(x_center, y_center, heart_size, UI_BORDER);
+                        draw_heart_outline(cx, cy, heart_size, UI_BORDER);
                     }
                 }
             }
 
-            let coin_x = content_left + (content_w - coin_dims.width) / 2.0;
-            let coin_y = block_top + heart_size + row_gap + coin_dims.offset_y;
+            let shields_x0 = panel_x + (panel_w - inner_row_w_shields) / 2.0;
+            let shields_y = hearts_y + heart_size + row_gap;
+            for idx in 0..shield_count {
+                let sx = shields_x0 + idx as f32 * (shield_bar_w + shield_gap);
+                let active = (idx as i32) < player.shield_charges.max(0);
+                let fill = if active {
+                    Color::from_rgba(48, 130, 255, 245)
+                } else {
+                    Color::from_rgba(120, 125, 135, 220)
+                };
+                let r = shield_bar_h / 2.0;
+                draw_rectangle(sx + r, shields_y, shield_bar_w - r * 2.0, shield_bar_h, fill);
+                draw_circle(sx + r, shields_y + r, r, fill);
+                draw_circle(sx + shield_bar_w - r, shields_y + r, r, fill);
+                if active {
+                    let hi = Color::from_rgba(130, 200, 255, 120);
+                    draw_rectangle(sx + r, shields_y, shield_bar_w - r * 2.0, shield_bar_h * 0.35, hi);
+                }
+            }
+
+            // ── BOTTOM-LEFT: coins text + attack bar + label ─────────────
+            let bl_x = 14.0;
+            let coin_font_sz = 26_u16;
+            let coin_label = format!("COINS: {}", self.coins);
+            let coin_dims = measure_text(&coin_label, font, coin_font_sz, 1.0);
+
+            let atk_bar_w = 220.0;
+            let atk_bar_h = 40.0;
+            let atk_label_sz = 18_u16;
+            let atk_ready = player.attack_ready_percent();
+            let atk_label = if atk_ready >= 0.999 { "ATK READY" } else { "ATK RECHARGE" };
+            let atk_label_dims = measure_text(atk_label, font, atk_label_sz, 1.0);
+
+            let bottom_block_h = coin_dims.height + 6.0 + atk_bar_h + 4.0;
+            let bl_y = SCREEN_H - bottom_block_h - 14.0;
+
             draw_shadowed_text(
                 &coin_label,
-                coin_x,
-                coin_y,
-                coin_font,
-                self.ui_font.as_ref(),
+                bl_x,
+                bl_y + coin_dims.offset_y,
+                coin_font_sz,
+                font,
                 Color::from_rgba(255, 220, 80, 255),
                 Color::from_rgba(30, 20, 8, 255),
             );
 
-            let atk_ready = player.attack_ready_percent();
-            let atk_bar_x = content_left + (content_w - atk_bar_w) / 2.0;
-            let atk_bar_y = block_top + heart_size + row_gap + coin_dims.height + row_gap + 6.0;
-
+            let bar_y = bl_y + coin_dims.height + 6.0;
             if let Some(ref frame) = self.hud_loading_bar {
-                draw_texture_ex(
-                    frame,
-                    atk_bar_x,
-                    atk_bar_y,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(vec2(atk_bar_w, atk_bar_h)),
-                        ..Default::default()
-                    },
-                );
+                draw_texture_ex(frame, bl_x, bar_y, WHITE, DrawTextureParams {
+                    dest_size: Some(vec2(atk_bar_w, atk_bar_h)),
+                    ..Default::default()
+                });
             } else {
-                draw_rectangle(atk_bar_x, atk_bar_y, atk_bar_w, atk_bar_h, Color::from_rgba(18, 20, 28, 220));
-                draw_rectangle_lines(atk_bar_x, atk_bar_y, atk_bar_w, atk_bar_h, 2.0, Color::from_rgba(180, 190, 220, 180));
+                draw_rectangle(bl_x, bar_y, atk_bar_w, atk_bar_h, Color::from_rgba(18, 20, 28, 220));
+                draw_rectangle_lines(bl_x, bar_y, atk_bar_w, atk_bar_h, 2.0, Color::from_rgba(180, 190, 220, 180));
             }
+            let fill_inset_x = 14.0;
+            let fill_inset_y = 10.0;
+            let fill_w = (atk_bar_w - fill_inset_x * 2.0) * atk_ready;
+            let fill_h = atk_bar_h - fill_inset_y * 2.0;
+            draw_rectangle(bl_x + fill_inset_x, bar_y + fill_inset_y, fill_w, fill_h, Color::from_rgba(48, 130, 255, 245));
+            draw_rectangle(bl_x + fill_inset_x, bar_y + fill_inset_y, fill_w, fill_h * 0.33, Color::from_rgba(136, 190, 255, 190));
 
-            let fill_x = atk_bar_x + HUD_ATTACK_BAR_INSET_X;
-            let fill_y = atk_bar_y + HUD_ATTACK_BAR_INSET_Y;
-            let fill_w = HUD_ATTACK_BAR_FILL_W * atk_ready;
-            let fill_h = HUD_ATTACK_BAR_FILL_H;
-            draw_rectangle(fill_x, fill_y, fill_w, fill_h, Color::from_rgba(48, 130, 255, 245));
-            draw_rectangle(fill_x, fill_y, fill_w, fill_h * 0.33, Color::from_rgba(136, 190, 255, 190));
-
-            let atk_label_x = content_left + (content_w - atk_label_dims.width) / 2.0;
-            let atk_label_y = atk_bar_y + atk_bar_h + atk_label_dims.offset_y + 4.0;
             draw_shadowed_text(
                 atk_label,
-                atk_label_x,
-                atk_label_y,
-                atk_label_font,
-                self.ui_font.as_ref(),
+                bl_x + atk_bar_w + 10.0,
+                bar_y + (atk_bar_h / 2.0) + atk_label_dims.offset_y - atk_label_dims.height / 2.0,
+                atk_label_sz,
+                font,
                 Color::from_rgba(200, 224, 255, 255),
                 Color::from_rgba(22, 30, 56, 255),
             );
 
+            // ── TOP-CENTER: level badge ──────────────────────────────────
             let level_text = format!("LEVEL {}", self.current_level);
             let level_font = 30_u16;
-            let font = self.ui_font.as_ref();
             let tdims = measure_text(&level_text, font, level_font, 1.0);
             let badge_pad_x = 32.0;
             let badge_pad_y = 18.0;
@@ -1102,41 +1181,20 @@ impl Game {
             let badge_h = tdims.height + badge_pad_y * 2.0;
             let badge_x = SCREEN_W / 2.0 - badge_w / 2.0;
             let badge_y = 12.0;
-            let badge_cx = SCREEN_W / 2.0;
-            let badge_cy = badge_y + badge_h / 2.0;
 
             if let Some(ref plate) = self.pause_plate {
-                draw_texture_ex(
-                    plate,
-                    badge_x,
-                    badge_y,
-                    WHITE,
-                    DrawTextureParams {
-                        dest_size: Some(vec2(badge_w, badge_h)),
-                        ..Default::default()
-                    },
-                );
+                draw_texture_ex(plate, badge_x, badge_y, WHITE, DrawTextureParams {
+                    dest_size: Some(vec2(badge_w, badge_h)),
+                    ..Default::default()
+                });
             } else {
-                draw_rectangle(
-                    badge_x,
-                    badge_y,
-                    badge_w,
-                    badge_h,
-                    Color::from_rgba(12, 14, 22, 200),
-                );
-                draw_rectangle_lines(
-                    badge_x,
-                    badge_y,
-                    badge_w,
-                    badge_h,
-                    2.0,
-                    Color::from_rgba(200, 200, 220, 120),
-                );
+                draw_rectangle(badge_x, badge_y, badge_w, badge_h, Color::from_rgba(12, 14, 22, 200));
+                draw_rectangle_lines(badge_x, badge_y, badge_w, badge_h, 2.0, Color::from_rgba(200, 200, 220, 120));
             }
             draw_shadowed_text_centered(
                 &level_text,
-                badge_cx,
-                badge_cy + 10.0,
+                SCREEN_W / 2.0,
+                badge_y + badge_h / 2.0 + 10.0,
                 level_font,
                 font,
                 Color::from_rgba(245, 245, 252, 255),
@@ -1543,6 +1601,169 @@ impl Game {
                 TILE_SIZE,
                 TILE_SIZE,
                 Color { r: LEVEL1_PALETTE.accent.r, g: LEVEL1_PALETTE.accent.g, b: LEVEL1_PALETTE.accent.b, a: pulse * 0.7 },
+            );
+        }
+    }
+
+    /// Single-line text on a `plate.png` panel (same style as the in-game level badge).
+    fn draw_plate_line_centered(&self, cx: f32, y_top: f32, text: &str, font_size: u16) -> f32 {
+        let font = self.ui_font.as_ref();
+        let tdims = measure_text(text, font, font_size, 1.0);
+        let pad_x = 32.0;
+        let pad_y = 18.0;
+        let badge_w = (tdims.width + pad_x * 2.0).max(200.0);
+        let badge_h = tdims.height + pad_y * 2.0;
+        let badge_x = cx - badge_w / 2.0;
+        if let Some(ref plate) = self.pause_plate {
+            draw_texture_ex(
+                plate,
+                badge_x,
+                y_top,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(badge_w, badge_h)),
+                    ..Default::default()
+                },
+            );
+        } else {
+            draw_rectangle(badge_x, y_top, badge_w, badge_h, Color::from_rgba(12, 14, 22, 200));
+            draw_rectangle_lines(badge_x, y_top, badge_w, badge_h, 2.0, Color::from_rgba(200, 200, 220, 120));
+        }
+        // Optical vertical center in plate (font bbox sits slightly high at raw geometric center).
+        let text_cy = y_top + badge_h / 2.0 + tdims.offset_y * 0.35 + 6.0;
+        draw_shadowed_text_centered(
+            text,
+            cx,
+            text_cy,
+            font_size,
+            font,
+            Color::from_rgba(245, 245, 252, 255),
+            Color::from_rgba(20, 20, 30, 255),
+        );
+        y_top + badge_h + 16.0
+    }
+
+    fn plate_stats_badge_height(&self, lines: &[String], font_size: u16) -> f32 {
+        let font = self.ui_font.as_ref();
+        let line_spacing = 10.0;
+        let mut content_h = 0.0_f32;
+        for (i, line) in lines.iter().enumerate() {
+            let d = measure_text(line, font, font_size, 1.0);
+            content_h += d.height;
+            if i + 1 < lines.len() {
+                content_h += line_spacing;
+            }
+        }
+        let pad_y = 22.0;
+        content_h + pad_y * 2.0
+    }
+
+    fn draw_plate_stats_centered(&self, cx: f32, y_top: f32, lines: &[String], font_size: u16) -> f32 {
+        let font = self.ui_font.as_ref();
+        let line_spacing = 10.0;
+        let mut max_w = 0.0_f32;
+        let mut heights: Vec<f32> = Vec::new();
+        for line in lines {
+            let d = measure_text(line, font, font_size, 1.0);
+            max_w = max_w.max(d.width);
+            heights.push(d.height);
+        }
+        let content_h: f32 = heights.iter().sum::<f32>() + line_spacing * (lines.len().saturating_sub(1)) as f32;
+        let pad_x = 36.0;
+        let pad_y = 22.0;
+        let badge_w = (max_w + pad_x * 2.0).max(280.0);
+        let badge_h = content_h + pad_y * 2.0;
+        let badge_x = cx - badge_w / 2.0;
+        if let Some(ref plate) = self.pause_plate {
+            draw_texture_ex(
+                plate,
+                badge_x,
+                y_top,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(badge_w, badge_h)),
+                    ..Default::default()
+                },
+            );
+        } else {
+            draw_rectangle(badge_x, y_top, badge_w, badge_h, Color::from_rgba(12, 14, 22, 200));
+            draw_rectangle_lines(badge_x, y_top, badge_w, badge_h, 2.0, Color::from_rgba(200, 200, 220, 120));
+        }
+        // measure_text heights sit a bit above true glyph extent; nudge down for optical centering in the plate.
+        let stats_block_nudge_y = 8.0_f32;
+        let block_top = y_top + (badge_h - content_h) / 2.0 + stats_block_nudge_y;
+        let mut y = block_top;
+        for line in lines {
+            let d = measure_text(line, font, font_size, 1.0);
+            let line_center = y + d.height / 2.0;
+            draw_shadowed_text_centered(
+                line,
+                cx,
+                line_center,
+                font_size,
+                font,
+                Color::from_rgba(235, 238, 248, 255),
+                Color::from_rgba(20, 20, 30, 255),
+            );
+            y += d.height + line_spacing;
+        }
+        y_top + badge_h + 16.0
+    }
+
+    fn draw_victory(&self) {
+        if let Some(ref tex) = self.winner_screen {
+            draw_texture_ex(
+                tex,
+                0.0,
+                0.0,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(vec2(SCREEN_W, SCREEN_H)),
+                    ..Default::default()
+                },
+            );
+        } else {
+            clear_background(Color::from_rgba(20, 16, 28, 255));
+        }
+
+        let cx = SCREEN_W / 2.0;
+
+        let button_w = TITLE_MENU_BUTTON_W;
+        let button_h = TITLE_MENU_BUTTON_H;
+        let spacing = TITLE_MENU_BUTTON_GAP;
+        let bottom_margin = 28.0;
+        let btn_x = (SCREEN_W - button_w) / 2.0;
+        let first_button_y = SCREEN_H - bottom_margin - 2.0 * button_h - spacing;
+
+        let stat_lines = vec![
+            format!("ENEMIES KILLED: {}", self.run_enemies_killed),
+            format!("HEALING POTIONS TAKEN: {}", self.run_healing_potions),
+            format!("SHIELD POTIONS TAKEN: {}", self.run_shield_potions),
+            format!("TOTAL COINS: {}", self.coins),
+        ];
+        let stats_font = 22_u16;
+        let stats_h = self.plate_stats_badge_height(&stat_lines, stats_font);
+        let stats_gap = 20.0;
+        let stats_y_top = first_button_y - stats_gap - stats_h;
+
+        let mut y = 32.0;
+        y = self.draw_plate_line_centered(cx, y, "Thanks for playing!", 26);
+        self.draw_plate_line_centered(cx, y, "You have found the treasure!", 24);
+
+        self.draw_plate_stats_centered(cx, stats_y_top, &stat_lines, stats_font);
+
+        const LABELS: [&str; 2] = ["PLAY AGAIN", "MAIN MENU"];
+        for (i, label) in LABELS.iter().enumerate() {
+            let by = first_button_y + i as f32 * (button_h + spacing);
+            let clicked = self.menu_click_index == Some(i) && self.menu_click_timer > 0.0;
+            self.draw_menu_button(
+                label,
+                btn_x,
+                by,
+                button_w,
+                button_h,
+                i == self.win_menu_selection,
+                clicked,
             );
         }
     }

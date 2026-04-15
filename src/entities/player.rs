@@ -36,6 +36,7 @@ pub struct Player {
     // Combat
     pub hp: i32,
     pub max_hp: i32,
+    pub shield_charges: i32,
     pub lives: i32,
     /// Set to true after opening the Level 1 chest and receiving the key.
     pub has_key: bool,
@@ -76,6 +77,7 @@ impl Player {
             move_start_y: grid_y,
             hp: STARTING_HP,
             max_hp: MAX_HP,
+            shield_charges: 0,
             lives: STARTING_LIVES,
             has_key: false,
             attack_cooldown: 0.0,
@@ -246,6 +248,13 @@ impl Player {
             return;
         }
 
+        if self.shield_charges > 0 {
+            self.shield_charges = (self.shield_charges - 1).max(0);
+            self.invincible_time = PLAYER_INVINCIBLE_TIME * 0.5;
+            self.anim_state = AnimState::Hurt;
+            return;
+        }
+
         self.hp -= amount;
         self.invincible_time = PLAYER_INVINCIBLE_TIME;
         self.anim_state = AnimState::Hurt;
@@ -259,6 +268,10 @@ impl Player {
     /// Heal the player
     pub fn heal(&mut self, amount: i32) {
         self.hp = (self.hp + amount).min(self.max_hp);
+    }
+
+    pub fn add_shield(&mut self, amount: i32) {
+        self.shield_charges = (self.shield_charges + amount).clamp(0, MAX_SHIELD_CHARGES);
     }
 
     /// Respawn at level start
@@ -275,6 +288,7 @@ impl Player {
         self.invincible_time = PLAYER_INVINCIBLE_TIME;
         self.anim_state = AnimState::Idle;
         self.has_key = false;
+        self.shield_charges = 0;
     }
 
     /// Update animation state

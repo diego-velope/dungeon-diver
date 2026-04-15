@@ -19,6 +19,8 @@ pub struct TerrainAtlas {
     pub door_leaf_closed: Texture2D,
     pub door_leaf_open:   Texture2D,
     pub door_frame_top:   Texture2D,
+    pub spikes: [Texture2D; 4],
+    pub pit: Texture2D,
 }
 
 impl TerrainAtlas {
@@ -43,6 +45,13 @@ impl TerrainAtlas {
             door_leaf_closed: tex!("doors_leaf_closed"),
             door_leaf_open:   tex!("doors_leaf_open"),
             door_frame_top:   tex!("doors_frame_top"),
+            spikes: [
+                tex!("floor_spikes_anim_f0"),
+                tex!("floor_spikes_anim_f1"),
+                tex!("floor_spikes_anim_f2"),
+                tex!("floor_spikes_anim_f3"),
+            ],
+            pit: tex!("hole"),
         })
     }
 
@@ -188,5 +197,15 @@ impl TerrainAtlas {
         // Arch frame above the tile
         let frame_h = TILE_SIZE * 0.5;
         self.draw_sized(&self.door_frame_top, sx, sy - frame_h, TILE_SIZE, frame_h);
+    }
+
+    pub fn draw_spikes(&self, sx: f32, sy: f32, frame: usize) {
+        self.draw_floor(0, 0, sx, sy);
+        let idx = frame % self.spikes.len();
+        self.draw_tile_0(&self.spikes[idx], sx, sy);
+    }
+
+    pub fn draw_pit(&self, sx: f32, sy: f32) {
+        self.draw_tile_0(&self.pit, sx, sy);
     }
 }

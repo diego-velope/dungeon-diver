@@ -1,71 +1,29 @@
 // Dungeon Diver - Level & Tile System
-// Grid-based tile map - tile size is configurable via TILE_SIZE constant
-// Default: 64x64 pixels (set in src/constants.rs)
-
 use macroquad::prelude::*;
 use crate::config::*;
-use crate::world::{Chest, Enemy, Item, ItemsAtlas, ItemType, TerrainAtlas, Torch, TorchDir, Vase};
+use crate::world::{Chest, Enemy, EnemyKind, Item, ItemsAtlas, ItemType, TerrainAtlas, Torch, TorchDir, Vase};
 
-/// Tile types in the level
-///
-/// ═══════════════════════════════════════════════════════════════════════════════
-/// TILE COMBINATION GRAMMAR
-/// ═══════════════════════════════════════════════════════════════════════════════
-/// Level layout uses 1-2 characters per cell to specify exact wall appearance:
-///
-/// SINGLE CHAR TILES:
-///   .  = Floor
-///   @  = Spawn (becomes Floor)
-///   E  = Exit door
-///   #  = SolidWall (solid brick on all sides)
-///
-/// DOUBLE CHAR TILES (wall combinations, order matters):
-///   _  = BottomCap  (horizontal top/bottom face)
-///   |  = LeftFace   (vertical side face, shows left side)
-///   |  = RightFace  (vertical side face, shows right side)
-///
-///   #| = SolidWallRight (solid + right side visible)
-///   |# = SolidWallLeft  (solid + left side visible)
-///   _| = BottomCapRight (bottom + right side)
-///   |_ = BottomCapLeft  (bottom + left side)
-///
-/// ═══════════════════════════════════════════════════════════════════════════════
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tile {
     Floor,
     Door,
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // EXPLICIT WALL TYPES - no autotiling needed
-    // ═════════════════════════════════════════════════════════════════════════
-    /// Solid brick on all sides - no transparency
     SolidWall,
-    /// Bottom/top cap - horizontal face visible (stone top)
     BottomCap,
-    /// Vertical side face showing LEFT side
     LeftFace,
-    /// Vertical side face showing RIGHT side
     RightFace,
-    /// Solid wall + right side visible
     SolidWallRight,
-    /// Solid wall + left side visible
     SolidWallLeft,
-    /// Bottom cap + right side
     BottomCapRight,
-    /// Bottom cap + left side
     BottomCapLeft,
-    /// Solid wall + bottom cap (the #- combination)
     SolidWallBottom,
-    /// Solid wall + top cap (the #+ combination)
     SolidWallTop,
-
-    // Future types
+    Spikes,
+    Pit,
     Hazard,
     Water,
 }
 
 impl Tile {
-    /// Check if this tile blocks movement
     pub fn is_solid(&self) -> bool {
         matches!(
             self,
@@ -79,19 +37,18 @@ impl Tile {
                 | Tile::BottomCapLeft
                 | Tile::SolidWallBottom
                 | Tile::SolidWallTop
+                | Tile::Pit
                 | Tile::Hazard
         )
     }
 
-    /// Check if this tile is walkable
     pub fn is_walkable(&self) -> bool {
-        matches!(self, Tile::Floor | Tile::Door)
+        matches!(self, Tile::Floor | Tile::Door | Tile::Spikes)
     }
 
-    /// Get the sprite type for rendering (bypasses autotiling)
     pub fn sprite_type(&self) -> WallSprite {
         match self {
-            Tile::Floor => WallSprite::Floor,
+            Tile::Floor | Tile::Spikes | Tile::Pit | Tile::Hazard | Tile::Water => WallSprite::Floor,
             Tile::Door => WallSprite::Door,
             Tile::SolidWall => WallSprite::Mid,
             Tile::BottomCap => WallSprite::TopMid,
@@ -102,26 +59,23 @@ impl Tile {
             Tile::BottomCapRight => WallSprite::TopRight,
             Tile::BottomCapLeft => WallSprite::TopLeft,
             Tile::SolidWallBottom => WallSprite::BottomMid,
-            Tile::Hazard | Tile::Water => WallSprite::Floor,
             Tile::SolidWallTop => WallSprite::TopMid,
         }
     }
 }
 
-/// Which wall sprite to use (direct mapping, no autotiling)
 pub enum WallSprite {
     Floor,
     Door,
-    Mid,         // wall_mid - solid brick at 0°
-    TopMid,      // wall_top_mid at 0° - horizontal cap
-    TopLeft,     // wall_top_mid at 0° + 270° - corner with left side
-    TopRight,    // wall_top_mid at 0° + 90° - corner with right side
-    Left,        // wall_mid + wall_top_mid at 270° - left side face
-    Right,       // wall_mid + wall_top_mid at 90° - right side face
-    BottomMid,   // wall_mid at 0° + wall_top_mid at 0° - solid + bottom cap (#- combo)
+    Mid,
+    TopMid,
+    TopLeft,
+    TopRight,
+    Left,
+    Right,
+    BottomMid,
 }
 
-/// Level structure with tile grid
 pub struct Level {
     pub width: usize,
     pub height: usize,
@@ -131,24 +85,20 @@ pub struct Level {
     pub exit_x: i32,
     pub exit_y: i32,
     pub palette: Palette,
-    // Level objects
     pub items: Vec<Item>,
     pub vases: Vec<Vase>,
     pub torches: Vec<Torch>,
     pub chests: Vec<Chest>,
     pub enemies: Vec<Enemy>,
-    /// Updated by chest/key logic; used by door rendering in later phases.
     pub door_unlocked: bool,
 }
 
 impl Level {
-    /// Create a new empty level
     pub fn new(width: usize, height: usize, palette: Palette) -> Self {
-        let tiles = vec![vec![Tile::Floor; width]; height];
         Self {
             width,
             height,
-            tiles,
+            tiles: vec![vec![Tile::Floor; width]; height],
             spawn_x: 1,
             spawn_y: 1,
             exit_x: width as i32 - 2,
@@ -163,391 +113,375 @@ impl Level {
         }
     }
 
-    /// Load Level 1: Tutorial Dungeon
-    /// 12x12 tiles - compact level for testing with larger tiles
-    pub fn load_level_1() -> Self {
+    fn parse_layout(&mut self, layout: &[&str]) {
         use Tile::*;
-
-        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
-
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // TILE COMBINATION GRAMMAR - 1-2 characters per cell
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // KEY COMBINATIONS (each row must be exactly 16 chars!)
-        // ═══════════════════════════════════════════════════════════════════════════════
-        //   #  = SolidWall      (just brick face)
-        //   #| = SolidWallRight (brick + RIGHT side face, flip_x=true)
-        //   |# = SolidWallLeft  (brick + LEFT side face, flip_x=false)
-        //   #- = SolidWallBottom (brick + top cap, like your 3rd image)
-        //   _  = BottomCap       (just top cap, lighter stone)
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // Legend: @=spawn  E=exit  C=coin  B=blue coin  P=potion  V=vase  H=chest  G=coin bag
-        // ═══════════════════════════════════════════════════════════════════════════════
-
-        let layout = [
-            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",  // row 0
-            "#LT@...........RT#",  // row 1
-            "#.........BP...E#",  // row 2  
-            "#......C......RT#",  // row 3
-            "#.....##-#-#-#.G..#",  // row 4
-            "#.....#-.H.#....#",  // row 5
-            "#.....T...#-#-#-#-#-#",  // row 6
-            "#.B....C....SP..#",  // row 7
-            "#.G........B...#",  // row 8
-            "#...C.......C..#",  // row 9
-            "#.........C...RT#",  // row 10
-            "#LT.............#",  // row 11
-            "#.......C......#",  // row 12
-            "#..C...........#",  // row 13
-            "#..........G...#",  // row 14
-            "################",  // row 15
-        ];
-
-        // Parse the layout - each cell is 1-2 characters
         for (y, row) in layout.iter().enumerate() {
-            if y >= level.height {
+            if y >= self.height {
                 break;
             }
-            let mut x = 0;
-
             let chars: Vec<char> = row.chars().collect();
-            let mut i = 0;
-
-            while i < chars.len() && x < level.width {
+            let mut i = 0usize;
+            let mut x = 0usize;
+            while i < chars.len() && x < self.width {
                 let ch = chars[i];
-                let next_ch = if i + 1 < chars.len() { Some(chars[i + 1]) } else { None };
-
-                // Check for 2-character combinations first (order matters!)
-                let (tile_type, consumed) = match (ch, next_ch) {
-                    // Wall combinations
-                    ('#', Some('|')) => (SolidWallRight, 2),
-                    ('|', Some('#')) => (SolidWallLeft, 2),
-                    ('#', Some('-')) => (SolidWallBottom, 2),  // #- = solid + bottom cap
-                    ('#', Some('+')) => (SolidWallTop, 2),  // #+ = solid + top cap
-                    ('_', Some('|')) => (BottomCapRight, 2),
-                    ('|', Some('_')) => (BottomCapLeft, 2),
-
-                    // Item combinations (2-char codes)
-                    ('B', Some('P')) => {
-                        level.items.push(Item::new(x as i32, y as i32, ItemType::BigPotion));
+                let next = chars.get(i + 1).copied();
+                let next2 = chars.get(i + 2).copied();
+                let (tile, consumed) = match (ch, next, next2) {
+                    ('S', Some('S'), Some('P')) => {
+                        self.items.push(Item::new(x as i32, y as i32, ItemType::ShieldPotion));
+                        (Floor, 3)
+                    }
+                    ('B', Some('S'), Some('P')) => {
+                        self.items.push(Item::new(x as i32, y as i32, ItemType::BigShieldPotion));
+                        (Floor, 3)
+                    }
+                    ('#', Some('|'), _) => (SolidWallRight, 2),
+                    ('|', Some('#'), _) => (SolidWallLeft, 2),
+                    ('#', Some('-'), _) => (SolidWallBottom, 2),
+                    ('#', Some('+'), _) => (SolidWallTop, 2),
+                    ('_', Some('|'), _) => (BottomCapRight, 2),
+                    ('|', Some('_'), _) => (BottomCapLeft, 2),
+                    ('B', Some('P'), _) => {
+                        self.items.push(Item::new(x as i32, y as i32, ItemType::BigPotion));
                         (Floor, 2)
                     }
-                    ('S', Some('P')) => {
-                        level.items.push(Item::new(x as i32, y as i32, ItemType::SmallPotion));
+                    ('S', Some('P'), _) => {
+                        self.items.push(Item::new(x as i32, y as i32, ItemType::SmallPotion));
                         (Floor, 2)
                     }
-                    ('L', Some('T')) => {
-                        level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Left));
+                    ('L', Some('T'), _) => {
+                        self.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Left));
                         (Floor, 2)
                     }
-                    ('R', Some('T')) => {
-                        level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Right));
+                    ('R', Some('T'), _) => {
+                        self.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Right));
                         (Floor, 2)
                     }
-
-                    // Single char tiles (not part of a combo)
-                    _ => {
-                        match ch {
-                            '#' => (SolidWall, 1),
-                            '_' => (BottomCap, 1),
-                            '|' => (RightFace, 1),  // default to right face for single |
-                            '.' => (Floor, 1),
-                            '@' => {
-                                level.spawn_x = x as i32;
-                                level.spawn_y = y as i32;
-                                (Floor, 1)
-                            }
-                            'E' => {
-                                level.exit_x = x as i32;
-                                level.exit_y = y as i32;
-                                (Door, 1)
-                            }
-                            'C' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::Coin));
-                                (Floor, 1)
-                            }
-                            'B' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::BlueCoin));
-                                (Floor, 1)
-                            }
-                            'G' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::CoinBag));
-                                (Floor, 1)
-                            }
-                            'P' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::Potion));
-                                (Floor, 1)
-                            }
-                            'V' => {
-                                let contents = if (x + y) % 3 == 0 { Some(ItemType::Coin) } else { None };
-                                level.vases.push(Vase::new(x as i32, y as i32, contents));
-                                (Floor, 1)
-                            }
-                            'T' => {
-                                level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Top));
-                                (Floor, 1)
-                            }
-                            'H' => {
-                                level.chests.push(Chest::new(x as i32, y as i32));
-                                (Floor, 1)
-                            }
-                            'Z' => {
-                                level.enemies.push(Enemy::new(x as i32, y as i32));
-                                (Floor, 1)
-                            }
-                            _ => (Floor, 1),  // Unknown char → floor
-                        }
-                    }
-                };
-
-                level.tiles[y][x] = tile_type;
-                x += 1;
-                i += consumed;
-            }
-        }
-
-        level
-    }
-
-    /// Load Level 2: Zombie Crypt
-    /// 16x16 tiles - similar size to Level 1 but different layout
-    /// Features: Walls in middle, different chest/door positions, zombie enemies
-    pub fn load_level_2() -> Self {
-        use Tile::*;
-
-        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
-
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // LEVEL 2 LAYOUT - Zombie Crypt
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // Key differences from Level 1:
-        //   - Walls create a more maze-like layout in the middle
-        //   - Chest is in a different location (bottom right area)
-        //   - Exit is on the left side instead of right
-        //   - Multiple zombie spawn points (Z)
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // Legend: @=spawn  E=exit  C=coin  B=blue coin  P=potion  H=chest  Z=zombie
-        // ═══════════════════════════════════════════════════════════════════════════════
-
-        let layout = [
-            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",  // row 0
-            "#..............#",  // row 1
-            "#..####.####...#",  // row 2 - walls in middle
-            "#..#Z#...H.#...E#",  // row 3 - zombie, chest, exit
-            "#..####......###",  // row 4
-            "#....####..#...#",  // row 5
-            "#..............#",  // row 6
-            "#..####...#....#",  // row 7 - walls
-            "#@.....Z..#....#",  // row 8 - spawn, zombie
-            "#..####...####.#",  // row 9
-            "#..............#",  // row 10
-            "#.......Z......#",  // row 11 - zombie
-            "#......#####...#",  // row 12 - wall section
-            "#..............#",  // row 13
-            "#...C......BP..#",  // row 14 - coin, big potion
-            "################",  // row 15
-        ];
-
-        // Parse the layout - same parser as Level 1
-        for (y, row) in layout.iter().enumerate() {
-            if y >= level.height {
-                break;
-            }
-            let mut x = 0;
-
-            let chars: Vec<char> = row.chars().collect();
-            let mut i = 0;
-
-            while i < chars.len() && x < level.width {
-                let ch = chars[i];
-                let next_ch = if i + 1 < chars.len() { Some(chars[i + 1]) } else { None };
-
-                // Check for 2-character combinations first (order matters!)
-                let (tile_type, consumed) = match (ch, next_ch) {
-                    // Wall combinations
-                    ('#', Some('|')) => (SolidWallRight, 2),
-                    ('|', Some('#')) => (SolidWallLeft, 2),
-                    ('#', Some('-')) => (SolidWallBottom, 2),
-                    ('#', Some('+')) => (SolidWallTop, 2),
-                    ('_', Some('|')) => (BottomCapRight, 2),
-                    ('|', Some('_')) => (BottomCapLeft, 2),
-
-                    // Item combinations (2-char codes)
-                    ('B', Some('P')) => {
-                        level.items.push(Item::new(x as i32, y as i32, ItemType::BigPotion));
-                        (Floor, 2)
-                    }
-                    ('S', Some('P')) => {
-                        level.items.push(Item::new(x as i32, y as i32, ItemType::SmallPotion));
-                        (Floor, 2)
-                    }
-                    ('L', Some('T')) => {
-                        level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Left));
-                        (Floor, 2)
-                    }
-                    ('R', Some('T')) => {
-                        level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Right));
-                        (Floor, 2)
-                    }
-
-                    // Single char tiles (not part of a combo)
-                    _ => {
-                        match ch {
-                            '#' => (SolidWall, 1),
-                            '_' => (BottomCap, 1),
-                            '|' => (RightFace, 1),
-                            '.' => (Floor, 1),
-                            '@' => {
-                                level.spawn_x = x as i32;
-                                level.spawn_y = y as i32;
-                                (Floor, 1)
-                            }
-                            'E' => {
-                                level.exit_x = x as i32;
-                                level.exit_y = y as i32;
-                                (Door, 1)
-                            }
-                            'C' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::Coin));
-                                (Floor, 1)
-                            }
-                            'B' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::BlueCoin));
-                                (Floor, 1)
-                            }
-                            'G' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::CoinBag));
-                                (Floor, 1)
-                            }
-                            'P' => {
-                                level.items.push(Item::new(x as i32, y as i32, ItemType::Potion));
-                                (Floor, 1)
-                            }
-                            'V' => {
-                                let contents = if (x + y) % 3 == 0 { Some(ItemType::Coin) } else { None };
-                                level.vases.push(Vase::new(x as i32, y as i32, contents));
-                                (Floor, 1)
-                            }
-                            'T' => {
-                                level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Top));
-                                (Floor, 1)
-                            }
-                            'H' => {
-                                level.chests.push(Chest::new(x as i32, y as i32));
-                                (Floor, 1)
-                            }
-                            'Z' => {
-                                level.enemies.push(Enemy::new(x as i32, y as i32));
-                                (Floor, 1)
-                            }
-                            _ => (Floor, 1),
-                        }
-                    }
-                };
-
-                level.tiles[y][x] = tile_type;
-                x += 1;
-                i += consumed;
-            }
-        }
-
-        level
-    }
-
-
-    /// Level 3: The Bone Pit
-    /// Harder than Level 2 — 4 zombies, split corridors, exit top-left.
-    /// Spawn: bottom-left (@). Exit: top-left (E).
-    /// 16×16 tiles, all single-char layout.
-    pub fn load_level_3() -> Self {
-        use Tile::*;
-
-        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
-
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // LEVEL 3 LAYOUT - The Bone Pit
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // Key differences from Level 2:
-        //   - 4 zombies (up from 3)
-        //   - Exit is top-left, spawn is bottom-left (reverse traversal)
-        //   - Central horizontal barrier splits level into upper/lower halves
-        //   - Left side has a narrow corridor + guarded mini-room
-        //   - Chest guarded by two flanking zombies (row 7)
-        // ═══════════════════════════════════════════════════════════════════════════════
-        // Legend: @=spawn  E=exit  C=coin  P=potion  H=chest  Z=zombie
-        // ═══════════════════════════════════════════════════════════════════════════════
-
-        let layout = [
-            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",  // row  0  top border
-            "#E......BP......#",  // row  1  exit top-left
-            "#.##-##-.#-#-#-#-#-#-.##",  // row  2  thick wall forces movement right
-            "#.#Z#.........##",  // row  3  guarded mini-room
-            "#.###.SP.......##",  // row  4
-            "#.............#-#",  // row  5  open corridor along right wall
-            "#..##-#-#-#-#-......#",  // row  6  horizontal barrier (gap on right)
-            "#..#Z.G...Z....#",  // row  7  two zombies flanking the chest corridor
-            "#..#.......H...#",  // row  8  chest behind zombie line
-            "#..######......#",  // row  9  mirror barrier closes the chamber
-            "#..............#",  // row 10  open bottom section
-            "#.##-#-#.........#",  // row 11  left side obstacle
-            "#.#..#.....Z...#",  // row 12  zombie bottom-right
-            "#.#-C.#-.....SP...#",  // row 13  coin + potion bottom reward
-            "#@.............#",  // row 14  spawn bottom-left
-            "################",  // row 15  bottom border
-        ];
-
-        // Parse the layout — same 2-char combo parser as Level 1/2
-        for (y, row) in layout.iter().enumerate() {
-            if y >= level.height { break; }
-            let mut x = 0;
-            let chars: Vec<char> = row.chars().collect();
-            let mut i = 0;
-
-            while i < chars.len() && x < level.width {
-                let ch = chars[i];
-                let next_ch = if i + 1 < chars.len() { Some(chars[i + 1]) } else { None };
-
-                let (tile_type, consumed) = match (ch, next_ch) {
-                    ('#', Some('|')) => (SolidWallRight, 2),
-                    ('|', Some('#')) => (SolidWallLeft, 2),
-                    ('#', Some('-')) => (SolidWallBottom, 2),
-                    ('#', Some('+')) => (SolidWallTop, 2),
-                    ('_', Some('|')) => (BottomCapRight, 2),
-                    ('|', Some('_')) => (BottomCapLeft, 2),
-                    ('B', Some('P')) => { level.items.push(Item::new(x as i32, y as i32, ItemType::BigPotion)); (Floor, 2) }
-                    ('S', Some('P')) => { level.items.push(Item::new(x as i32, y as i32, ItemType::SmallPotion)); (Floor, 2) }
-                    ('L', Some('T')) => { level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Left)); (Floor, 2) }
-                    ('R', Some('T')) => { level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Right)); (Floor, 2) }
                     _ => match ch {
                         '#' => (SolidWall, 1),
                         '_' => (BottomCap, 1),
                         '|' => (RightFace, 1),
                         '.' => (Floor, 1),
-                        '@' => { level.spawn_x = x as i32; level.spawn_y = y as i32; (Floor, 1) }
-                        'E' => { level.exit_x = x as i32; level.exit_y = y as i32; (Door, 1) }
-                        'C' => { level.items.push(Item::new(x as i32, y as i32, ItemType::Coin)); (Floor, 1) }
-                        'B' => { level.items.push(Item::new(x as i32, y as i32, ItemType::BlueCoin)); (Floor, 1) }
-                        'G' => { level.items.push(Item::new(x as i32, y as i32, ItemType::CoinBag)); (Floor, 1) }
-                        'P' => { level.items.push(Item::new(x as i32, y as i32, ItemType::Potion)); (Floor, 1) }
-                        'V' => { let c = if (x + y) % 3 == 0 { Some(ItemType::Coin) } else { None }; level.vases.push(Vase::new(x as i32, y as i32, c)); (Floor, 1) }
-                        'T' => { level.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Top)); (Floor, 1) }
-                        'H' => { level.chests.push(Chest::new(x as i32, y as i32)); (Floor, 1) }
-                        'Z' => { level.enemies.push(Enemy::new(x as i32, y as i32)); (Floor, 1) }
+                        '^' => (Spikes, 1),
+                        'O' => (Pit, 1),
+                        '@' => {
+                            self.spawn_x = x as i32;
+                            self.spawn_y = y as i32;
+                            (Floor, 1)
+                        }
+                        'E' => {
+                            self.exit_x = x as i32;
+                            self.exit_y = y as i32;
+                            (Door, 1)
+                        }
+                        'C' => {
+                            self.items.push(Item::new(x as i32, y as i32, ItemType::Coin));
+                            (Floor, 1)
+                        }
+                        'B' => {
+                            self.items.push(Item::new(x as i32, y as i32, ItemType::BlueCoin));
+                            (Floor, 1)
+                        }
+                        'G' => {
+                            self.items.push(Item::new(x as i32, y as i32, ItemType::CoinBag));
+                            (Floor, 1)
+                        }
+                        'P' => {
+                            self.items.push(Item::new(x as i32, y as i32, ItemType::Potion));
+                            (Floor, 1)
+                        }
+                        'V' => {
+                            let contents = if (x + y) % 3 == 0 { Some(ItemType::Coin) } else { None };
+                            self.vases.push(Vase::new(x as i32, y as i32, contents));
+                            (Floor, 1)
+                        }
+                        'T' => {
+                            self.torches.push(Torch::with_direction(x as i32, y as i32, TorchDir::Top));
+                            (Floor, 1)
+                        }
+                        'H' => {
+                            self.chests.push(Chest::new(x as i32, y as i32));
+                            (Floor, 1)
+                        }
+                        'Z' => {
+                            self.enemies.push(Enemy::new_with_kind(x as i32, y as i32, EnemyKind::Zombie));
+                            (Floor, 1)
+                        }
+                        'W' => {
+                            self.enemies.push(Enemy::new_with_kind(x as i32, y as i32, EnemyKind::BigZombie));
+                            (Floor, 1)
+                        }
+                        'D' => {
+                            self.enemies.push(Enemy::new_with_kind(x as i32, y as i32, EnemyKind::BigDemon));
+                            (Floor, 1)
+                        }
                         _ => (Floor, 1),
                     },
                 };
-
-                level.tiles[y][x] = tile_type;
-                x += 1;
+                self.tiles[y][x] = tile;
                 i += consumed;
+                x += 1;
             }
         }
+    }
 
+    pub fn load_level_1() -> Self {
+        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        let layout = [
+            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",
+            "#LT@...........RT#",
+            "#.........BP...E#",
+            "#......C......RT#",
+            "#.....##-#-#-#.G..#",
+            "#.....#-.H.#....#",
+            "#.....T...#-#-#-#-#-#",
+            "#.B....C....SP..#",
+            "#.G........B...#",
+            "#...C.......C..#",
+            "#.........C...RT#",
+            "#LT.............#",
+            "#.......C......#",
+            "#..C...........#",
+            "#..........G...#",
+            "################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_2() -> Self {
+        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        let layout = [
+            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",
+            "#..............#",
+            "#..####.####...#",
+            "#..#Z#...H.#...E#",
+            "#..####......###",
+            "#....####..#...#",
+            "#..............#",
+            "#..####...#....#",
+            "#@.....Z..#....#",
+            "#..####...####.#",
+            "#..............#",
+            "#.......Z......#",
+            "#......#####...#",
+            "#..............#",
+            "#...C......BP..#",
+            "################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_3() -> Self {
+        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        let layout = [
+            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",
+            "#.......BP...E..#",
+            "#.##-##-.#-#-#-#-#-#-.##",
+            "#.#Z#.........##",
+            "#.###.SP.......##",
+            "#.............#-#",
+            "#..##-#-#-#-#-......#",
+            "#..#Z.G...Z....#",
+            "#..#.......H...#",
+            "#..######......#",
+            "#..............#",
+            "#.##-#-#.........#",
+            "#.#..#.....Z...#",
+            "#.#-C.#-.....SP...#",
+            "#@.............#",
+            "################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_4() -> Self {
+        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        let layout = [
+            "################",
+            "#E..^.^....C..Z#",
+            "#.####.####.####",
+            "#...^....SSP...#",
+            "#.####.####..#.#",
+            "#....^....#..#.#",
+            "#.######..#..#.#",
+            "#......#..#..#.#",
+            "#..H...#..#..#.#",
+            "#......#..#..#.#",
+            "#.######..#..#.#",
+            "#....^....#..#.#",
+            "#.####.####..#.#",
+            "#..C.....G....Z#",
+            "#@......^......#",
+            "################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_5() -> Self {
+        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        let layout = [
+            "################",
+            "#@....O....C...#",
+            "#.###.O.######.#",
+            "#...#...#....#.#",
+            "###.#.O.#.Z..#.#",
+            "#...#...#.##.#.#",
+            "#.O.###.#....#.#",
+            "#...#...#.####.#",
+            "#.###.O.#..H...#",
+            "#...#...#.####.#",
+            "#.O.#.###....#.#",
+            "#...#...#..Z.#.#",
+            "#.###.O.###..#.#",
+            "#..SSP..BSP..#E#",
+            "#....C....Z...##",
+            "################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_6() -> Self {
+        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        let layout = [
+            "################",
+            "#@....^..W....E#",
+            "#.####O####O##.#",
+            "#....^.....^...#",
+            "#.##.#######.###",
+            "#..Z....H.....W#",
+            "#.##.#######.###",
+            "#....^.....^...#",
+            "#.####O####O##.#",
+            "#..BSP....SSP..#",
+            "#.##.#######.###",
+            "#..Z.......Z...#",
+            "#.##.#######.###",
+            "#..C....P....G.#",
+            "#....^....SP...#",
+            "################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_7() -> Self {
+        let mut level = Self::new(LEVEL_LARGE_W, LEVEL_LARGE_H, LEVEL1_PALETTE);
+        let layout = [
+            "####################",
+            "#E......#....C.....#",
+            "#.####..#.######.###",
+            "#....#..#......#...#",
+            "###..#..####O..###.#",
+            "#....#....W.#......#",
+            "#.######.##.#.###..#",
+            "#..SSP...##.#...#..#",
+            "#.######....###.#..#",
+            "#.....##.H....#.#..#",
+            "#.###.##.####.#.#..#",
+            "#...#....#....#.#..#",
+            "###.#.####.####.##.#",
+            "#...#...Z...^....#.#",
+            "#.#####.#####.##.#.#",
+            "#..P....W....BP..#.#",
+            "#.#####.#####.##.#.#",
+            "#....Z......C....#.#",
+            "#@...............D.#",
+            "####################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_8() -> Self {
+        let mut level = Self::new(LEVEL_LARGE_W, LEVEL_LARGE_H, LEVEL1_PALETTE);
+        let layout = [
+            "####################",
+            "#.........E........#",
+            "#.^^^^.######.^^^^.#",
+            "#.^..^.##WW##.^..^.#",
+            "#.^..^.#....#.^..^.#",
+            "#.^^^^.#.H..#.^^^^.#",
+            "#......#.DD.#......#",
+            "####.###....###.####",
+            "#....#..Z..Z..#....#",
+            "#.C..#..W..W..#..C.#",
+            "#....#..Z..D..#....#",
+            "####.###....###.####",
+            "#......#.BP........#",
+            "#.^^^^.#....#.^^^^.#",
+            "#.^..^.#....#.^..^.#",
+            "#.^..^.##..##.^..^.#",
+            "#.^^^^.######.^^^^.#",
+            "#....SSP....G....P.#",
+            "#.........@........#",
+            "####################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_9() -> Self {
+        let mut level = Self::new(LEVEL_LARGE_W, LEVEL_LARGE_H, LEVEL1_PALETTE);
+        let layout = [
+            "####################",
+            "#@.................#",
+            "#.################.#",
+            "#......^....W....#.#",
+            "#.#.###########..#.#",
+            "#.#.#.........#..#.#",
+            "#.#.#.#######.#..#.#",
+            "#.#.#.#..D..#.#..#.#",
+            "#.#.#.#.###.#.#..#.#",
+            "#.#.#.#.#H..#.#..#.#",
+            "#.#.#.#.###.#.#..#.#",
+            "#.#.#....W..#.#..#.#",
+            "#.#.#.#######.#..#.#",
+            "#.#.#....O.......#.#",
+            "#.#.###########..#.#",
+            "#.#....^....D....#.#",
+            "#.################.#",
+            "#..BSP...G..SSP...#",
+            "#...............E.#",
+            "####################",
+        ];
+        level.parse_layout(&layout);
+        level
+    }
+
+    pub fn load_level_10() -> Self {
+        let mut level = Self::new(LEVEL_LARGE_W, LEVEL_LARGE_H, LEVEL1_PALETTE);
+        let layout = [
+            "####################",
+            "#...BP....E.H.......#",
+            "#.######.######.##.#",
+            "#.#..D.#.^..^.#..##",
+            "#.#.##BP#.####.#.##.#",
+            "#.#.##.#BSP..BSP#.#.##.#",
+            "#.#H...####.#.#....#",
+            "#.####.#OO#.#.####.#",
+            "#....#.#OO#.#.#....#",
+            "####.#.####.#.#.####",
+            "#....#.GWWG.#.#....#",
+            "#.####.####.#.####.#",
+            "#.#..Z..P...#....#.#",
+            "#.#.###########.#.#.",
+            "#.#.....BSP.....#.#.",
+            "#.###.#######.###.#.",
+            "#...#..D...D..#...#.",
+            "#.P.#..W...W..#.G.#.",
+            "#@..#..Z...D..#SSP#.",
+            "####################",
+        ];
+        level.parse_layout(&layout);
         level
     }
 
 
-    /// Get tile at grid position
     pub fn get_tile(&self, x: i32, y: i32) -> Tile {
         if x < 0 || x >= self.width as i32 || y < 0 || y >= self.height as i32 {
             return Tile::SolidWall;
@@ -555,14 +489,12 @@ impl Level {
         self.tiles[y as usize][x as usize]
     }
 
-    /// Set tile at grid position
     pub fn set_tile(&mut self, x: i32, y: i32, tile: Tile) {
         if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
             self.tiles[y as usize][x as usize] = tile;
         }
     }
 
-    /// Check if position is valid (within bounds and not a wall)
     pub fn is_valid(&self, x: i32, y: i32) -> bool {
         if x < 0 || x >= self.width as i32 || y < 0 || y >= self.height as i32 {
             return false;
@@ -570,7 +502,6 @@ impl Level {
         !self.tiles[y as usize][x as usize].is_solid()
     }
 
-    /// Update all level objects (torches, items)
     pub fn update(&mut self, dt: f32) {
         for torch in &mut self.torches {
             torch.update(dt);
@@ -583,15 +514,13 @@ impl Level {
         }
     }
 
-    /// Draw the visible portion of the level.
-    /// When `terrain` is `Some`, floors/walls use Gathering Set atlases (16→32 px scaling).
-    /// When `items_atlas` is `Some`, chests/keys use 0x72 sprites.
     pub fn draw(
         &self,
         camera_x: f32,
         camera_y: f32,
         terrain: Option<&TerrainAtlas>,
         items_atlas: Option<&ItemsAtlas>,
+        spike_timer: f32,
     ) {
         let start_x = (camera_x / TILE_SIZE).floor() as i32 - 1;
         let start_y = (camera_y / TILE_SIZE).floor() as i32 - 1;
@@ -633,6 +562,29 @@ impl Level {
                                 self.palette.floor_alt
                             };
                             draw_rectangle(screen_x, screen_y, TILE_SIZE, TILE_SIZE, color);
+                        }
+                    }
+                    Tile::Spikes => {
+                        if let Some(ref t) = terrain {
+                            let offset = ((x * 7 + y * 13) % 4) as f32 * 0.5;
+                            let local_t = spike_timer + offset;
+                            let cycle = 3.0_f32;
+                            let phase_t = local_t % cycle;
+                            let frame = if phase_t < 1.0 {
+                                ((phase_t * 4.0) as usize).min(3)
+                            } else {
+                                3 - ((((phase_t - 1.0) / 2.0) * 4.0) as usize).min(3)
+                            };
+                            t.draw_spikes(screen_x, screen_y, frame);
+                        } else {
+                            draw_rectangle(screen_x, screen_y, TILE_SIZE, TILE_SIZE, Color::from_rgba(90, 50, 50, 255));
+                        }
+                    }
+                    Tile::Pit => {
+                        if let Some(ref t) = terrain {
+                            t.draw_pit(screen_x, screen_y);
+                        } else {
+                            draw_rectangle(screen_x, screen_y, TILE_SIZE, TILE_SIZE, Color::from_rgba(10, 10, 15, 255));
                         }
                     }
                     Tile::Door => {
@@ -689,12 +641,10 @@ impl Level {
         }
     }
 
-    /// Convert pixel position to grid position
     pub fn pixel_to_grid(&self, x: f32, y: f32) -> (i32, i32) {
         ((x / TILE_SIZE).floor() as i32, (y / TILE_SIZE).floor() as i32)
     }
 
-    /// Convert grid position to pixel position (center of tile)
     pub fn grid_to_pixel(&self, x: i32, y: i32) -> (f32, f32) {
         (x as f32 * TILE_SIZE + TILE_SIZE / 2.0, y as f32 * TILE_SIZE + TILE_SIZE / 2.0)
     }
