@@ -2,22 +2,183 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=1280, height=720, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=1280, height=720, initial-scale=1.0"
+    />
     <meta name="tv-navigation" content="true" />
     <title>Dungeon Diver</title>
+
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: 1280px; height: 720px; overflow: hidden; background: #0a0a1a; }
-      #game-container { position: relative; width: 1280px; height: 720px; }
-      #glcanvas { position: absolute; top: 0; left: 0; width: 1280px; height: 720px; z-index: 1; }
-      #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #4a90d9; z-index: 10; font-family: Arial, sans-serif; }
+      @font-face {
+        font-family: "Press Start 2P";
+        src: url("assets/fonts/PressStart2P-Regular.ttf") format("truetype");
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #2a1a1a;
+        font-family: "Press Start 2P", monospace;
+      }
+
+      #splash {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1280px;
+        height: 720px;
+        background: url("assets/images/background.png") no-repeat center;
+        background-size: cover;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        transition: opacity 0.5s ease-out;
+      }
+
+      #splash.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #loading-container {
+        position: absolute;
+        top: 58%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(700px, 94vw);
+        height: calc(min(1400px, 94vw) * 100 / 1199);
+        background: url("assets/images/loadingBar.png") no-repeat center;
+        background-size: 100% 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* Inner groove insets tuned to the frame art (percent of container) */
+      #loading-fill {
+        position: absolute;
+        left: 6.2%;
+        top: 24%;
+        width: 0%;
+        height: 52%;
+        max-width: 87.6%;
+        background: linear-gradient(180deg, #ff9d00 0%, #ff6b00 100%);
+        border-radius: 14px;
+        box-shadow:
+          inset 0 2px 5px rgba(255, 255, 255, 0.4),
+          0 0 15px rgba(255, 107, 0, 0.6);
+        transition: width 0.2s ease-out;
+        overflow: hidden;
+      }
+
+      #loading-fill::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.3),
+          transparent
+        );
+        animation: shimmer 2s infinite;
+      }
+
+      @keyframes shimmer {
+        100% {
+          left: 100%;
+        }
+      }
+
+      #loading-label {
+        position: relative;
+        z-index: 1001;
+        font-size: 18px;
+        color: white;
+        text-shadow:
+          2px 2px 0px #000,
+          -1px -1px 0px #000,
+          1px -1px 0px #000,
+          -1px 1px 0px #000;
+        letter-spacing: 1px;
+      }
+
+      #splash-status {
+        position: absolute;
+        top: calc(58% + min(124px, 18vw));
+        font-size: 22px;
+        color: #e8b84a;
+        text-transform: uppercase;
+        text-shadow:
+          3px 3px 0px #000,
+          -1px -1px 0px #000,
+          1px -1px 0px #000,
+          -1px 1px 0px #000,
+          3px 0px 0px #000,
+          -3px 0px 0px #000,
+          0px 3px 0px #000,
+          0px -3px 0px #000;
+        letter-spacing: 3px;
+        max-width: 1200px;
+        text-align: center;
+        line-height: 1.6;
+      }
+
+      #glcanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1280px;
+        height: 720px;
+        z-index: 1;
+      }
+
+      #fps-overlay {
+        position: absolute;
+        top: 24px;
+        right: 24px;
+        z-index: 1200;
+        display: none;
+        min-width: 220px;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        background: rgba(0, 0, 0, 0.75);
+        color: #eaffea;
+        font-family: Arial, sans-serif;
+        font-size: 20px;
+        line-height: 1.4;
+        white-space: pre-line;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
-    <div id="game-container">
-      <canvas id="glcanvas" tabindex="1" width="1280" height="720"></canvas>
-      <div id="loading">Loading Dungeon Diver...</div>
+    <div id="splash">
+      <div id="loading-container">
+        <div id="loading-fill"></div>
+        <div id="loading-label">0%</div>
+      </div>
+
+      <div id="splash-status">Initializing...</div>
     </div>
+
+    <canvas id="glcanvas" tabindex="1" width="1280" height="720"></canvas>
+    <div id="fps-overlay" aria-hidden="true"></div>
 
     <script src="pal/namespace.js?v=1"></script>
     <script src="pal/detect-platform.js?v=1"></script>
@@ -28,20 +189,108 @@
     <script src="pal/platforms/android-tv.js?v=1"></script>
     <script src="pal/platforms/browser.js?v=1"></script>
     <script src="pal/pal-core.js?v=1"></script>
+
     <script src="mq_js_bundle.js?v=1"></script>
 
     <script>
+      window.mq_set_progress = function (percent) {
+        var fill = document.getElementById("loading-fill");
+        var label = document.getElementById("loading-label");
+        var status = document.getElementById("splash-status");
+
+        if (fill) fill.style.width = percent * 0.876 + "%";
+        if (label) label.textContent = Math.round(percent) + "%";
+
+        if (status) {
+          if (percent >= 100) status.textContent = "READY!";
+          else if (percent > 85) status.textContent = "Opening the vault...";
+          else if (percent > 55) status.textContent = "Loading audio...";
+          else if (percent > 40) status.textContent = "Sharpening steel...";
+          else if (percent > 25) status.textContent = "Mapping the dungeon...";
+          else if (percent > 10) status.textContent = "Spawning heroes...";
+          else status.textContent = "Connecting to engine...";
+        }
+      };
+
+      window.mq_hide_splash = function () {
+        var splash = document.getElementById("splash");
+        if (splash) {
+          splash.classList.add("hidden");
+        }
+        var canvas = document.getElementById("glcanvas");
+        if (canvas) {
+          canvas.focus();
+        }
+      };
+
       window.mq_shutdown_game = function () {
         var tryWindowClose = true;
         try {
           if (window.TV_PAL && typeof window.TV_PAL.shutdown === "function") {
             tryWindowClose = window.TV_PAL.shutdown() !== false;
           }
-          if (tryWindowClose) window.close();
+          if (tryWindowClose) {
+            window.close();
+          }
         } catch (error) {
           console.error("[DungeonDiver] platform shutdown failed:", error);
         }
       };
+
+      var FPS_TARGET = 30;
+      var fpsQueryEnabled =
+        new URLSearchParams(window.location.search).get("fps") === "true";
+      var fpsOverlayElement = null;
+      var fpsLastTimestamp = 0;
+      var fpsFrameCount = 0;
+      var fpsRunningTotal = 0;
+      var fpsLastOverlayRefresh = 0;
+
+      function refreshFpsOverlay(currentFps, avgFps) {
+        if (!fpsOverlayElement) return;
+        fpsOverlayElement.textContent =
+          "FPS\n" +
+          "Target: " +
+          FPS_TARGET +
+          "\n" +
+          "Current: " +
+          currentFps.toFixed(1) +
+          "\n" +
+          "Average: " +
+          avgFps.toFixed(1);
+      }
+
+      function tickFpsOverlay(timestampMs) {
+        if (!fpsQueryEnabled) return;
+
+        if (fpsLastTimestamp > 0) {
+          var frameDtMs = timestampMs - fpsLastTimestamp;
+          if (frameDtMs > 0) {
+            var currentFps = 1000 / frameDtMs;
+            fpsFrameCount += 1;
+            fpsRunningTotal += currentFps;
+            var avgFps = fpsRunningTotal / fpsFrameCount;
+
+            if (timestampMs - fpsLastOverlayRefresh >= 250) {
+              refreshFpsOverlay(currentFps, avgFps);
+              fpsLastOverlayRefresh = timestampMs;
+            }
+          }
+        }
+
+        fpsLastTimestamp = timestampMs;
+        requestAnimationFrame(tickFpsOverlay);
+      }
+
+      function initFpsOverlay() {
+        if (!fpsQueryEnabled) return;
+        fpsOverlayElement = document.getElementById("fps-overlay");
+        if (!fpsOverlayElement) return;
+
+        fpsOverlayElement.style.display = "block";
+        refreshFpsOverlay(0, 0);
+        requestAnimationFrame(tickFpsOverlay);
+      }
 
       var audioContexts = [];
       (function () {
@@ -57,13 +306,18 @@
 
       document.addEventListener("visibilitychange", function () {
         audioContexts.forEach(function (ctx) {
-          if (document.visibilityState === "hidden") ctx.suspend();
-          else if (document.visibilityState === "visible") ctx.resume();
+          if (document.visibilityState === "hidden") {
+            ctx.suspend();
+          } else if (document.visibilityState === "visible") {
+            ctx.resume();
+          }
         });
       });
 
       var DungeonDiverPlugin = {
         register_plugin: function (importObject) {
+          importObject.env.mq_set_progress = window.mq_set_progress;
+          importObject.env.mq_hide_splash = window.mq_hide_splash;
           importObject.env.mq_shutdown_game = window.mq_shutdown_game;
 
           window.mq_handle_up = function () {};
@@ -93,7 +347,7 @@
           importObject.env.mq_handle_back = function (pressed) {
             if (window.__tvRustFunctions.back) window.__tvRustFunctions.back(pressed);
           };
-        }
+        },
       };
 
       function wireRustTvHandlersFromResult(result) {
@@ -107,14 +361,26 @@
           left: exports.mq_handle_left || null,
           right: exports.mq_handle_right || null,
           action: exports.mq_handle_action || null,
-          back: exports.mq_handle_back || null
+          back: exports.mq_handle_back || null,
         };
-        window.mq_handle_up = function (pressed) { if (window.__tvRustFunctions.up) window.__tvRustFunctions.up(pressed); };
-        window.mq_handle_down = function (pressed) { if (window.__tvRustFunctions.down) window.__tvRustFunctions.down(pressed); };
-        window.mq_handle_left = function (pressed) { if (window.__tvRustFunctions.left) window.__tvRustFunctions.left(pressed); };
-        window.mq_handle_right = function (pressed) { if (window.__tvRustFunctions.right) window.__tvRustFunctions.right(pressed); };
-        window.mq_handle_action = function (pressed) { if (window.__tvRustFunctions.action) window.__tvRustFunctions.action(pressed); };
-        window.mq_handle_back = function (pressed) { if (window.__tvRustFunctions.back) window.__tvRustFunctions.back(pressed); };
+        window.mq_handle_up = function (pressed) {
+          if (window.__tvRustFunctions.up) window.__tvRustFunctions.up(pressed);
+        };
+        window.mq_handle_down = function (pressed) {
+          if (window.__tvRustFunctions.down) window.__tvRustFunctions.down(pressed);
+        };
+        window.mq_handle_left = function (pressed) {
+          if (window.__tvRustFunctions.left) window.__tvRustFunctions.left(pressed);
+        };
+        window.mq_handle_right = function (pressed) {
+          if (window.__tvRustFunctions.right) window.__tvRustFunctions.right(pressed);
+        };
+        window.mq_handle_action = function (pressed) {
+          if (window.__tvRustFunctions.action) window.__tvRustFunctions.action(pressed);
+        };
+        window.mq_handle_back = function (pressed) {
+          if (window.__tvRustFunctions.back) window.__tvRustFunctions.back(pressed);
+        };
         return result;
       }
 
@@ -129,16 +395,21 @@
       };
 
       window.addEventListener("load", function () {
-        if (typeof miniquad_add_plugin === "undefined" || typeof load === "undefined") {
+        var status = document.getElementById("splash-status");
+
+        if (
+          typeof miniquad_add_plugin === "undefined" ||
+          typeof load === "undefined"
+        ) {
           console.error("FATAL: mq_js_bundle.js failed to execute.");
+          if (status) status.textContent = "Error: Engine script failed.";
           return;
         }
 
+        initFpsOverlay();
+
         miniquad_add_plugin(DungeonDiverPlugin);
         load("dungeon-diver.wasm");
-
-        var loading = document.getElementById("loading");
-        if (loading) loading.style.display = "none";
       });
     </script>
   </body>
