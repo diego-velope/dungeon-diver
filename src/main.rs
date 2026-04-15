@@ -11,6 +11,7 @@ mod input;
 mod world;
 mod entities;
 mod rendering;
+mod splash_html;
 
 use macroquad::prelude::*;
 use game::{Game, ShutdownStage, shutdown_game};
@@ -44,15 +45,23 @@ async fn main() {
     // Initialize game state
     let mut game = Game::new();
 
-    // Preload player sprites + terrain tilesets
+    splash_html::set_loading_progress(0.0);
     game.load_player_sprites().await;
+    splash_html::set_loading_progress(14.0);
     game.load_terrain_atlas().await;
+    splash_html::set_loading_progress(28.0);
     game.load_items_atlas().await;
+    splash_html::set_loading_progress(42.0);
     game.load_enemy_atlas().await;
+    splash_html::set_loading_progress(56.0);
     game.load_font().await;
+    splash_html::set_loading_progress(70.0);
     game.load_audio().await;
+    splash_html::set_loading_progress(85.0);
     game.load_title_background().await;
+    splash_html::set_loading_progress(100.0);
     game.enter_title_music();
+    splash_html::hide_loading_splash();
 
     // Main game loop
     loop {
