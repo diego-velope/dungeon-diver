@@ -457,7 +457,7 @@ impl Level {
         let mut level = Self::new(LEVEL_LARGE_W, LEVEL_LARGE_H, LEVEL1_PALETTE);
         let layout = [
             "####################",
-            "#...BP....E.H.......#",
+            "#...BP....E.........#",
             "#.######.######.##.#",
             "#.#..D.#.^..^.#..##",
             "#.#.##BP#.####.#.##.#",
