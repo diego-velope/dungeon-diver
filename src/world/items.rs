@@ -4,6 +4,16 @@
 use macroquad::prelude::*;
 use crate::config::*;
 
+/// Same 0.1s on/off slice as the player iframe flicker: skip draw when the remainder is in the top half of each slice.
+#[inline]
+pub fn invincible_flicker_hidden(remaining: f32) -> bool {
+    if remaining <= 0.0 {
+        return false;
+    }
+    let s = IFRAME_FLASH_SLICE;
+    ((remaining % s) / s) > 0.5
+}
+
 /// Preloaded item sprites needed for interactive objects (chests, keys, etc).
 pub struct ItemsAtlas {
     pub chest_full_open: Vec<Texture2D>,  // 3 frames
@@ -524,6 +534,8 @@ pub struct Vase {
     pub broken: bool,
     /// Intact sprite is drawn by the Tiled `decoration` layer (`vase_shine_anim`); skip placeholder ellipse.
     pub tiled_sprite: bool,
+    /// `>0`: player hit — flicker like iframe flash for `VASE_SHATTER_WINDUP`, then `broken`.
+    pub shatter_timer: f32,
 }
 
 impl Vase {
@@ -533,12 +545,27 @@ impl Vase {
             grid_y,
             broken: false,
             tiled_sprite,
+            shatter_timer: 0.0,
         }
+    }
+
+    /// Start the pre-shatter invincible-style flicker. Returns `false` if already broken or already winding.
+    pub fn start_shatter_windup(&mut self) -> bool {
+        if self.broken || self.shatter_timer > 0.0 {
+            return false;
+        }
+        self.shatter_timer = VASE_SHATTER_WINDUP;
+        true
     }
 
     pub fn draw(&self, camera_x: f32, camera_y: f32) {
         if self.tiled_sprite && !self.broken {
             return;
+        }
+        if !self.tiled_sprite && !self.broken {
+            if self.shatter_timer > 0.0 && invincible_flicker_hidden(self.shatter_timer) {
+                return;
+            }
         }
         if self.broken {
             // Draw broken shards
@@ -567,14 +594,6 @@ impl Vase {
         draw_ellipse(screen_x - 5.0, screen_y - 6.0, 6.0, 8.0, 0.0, Color { r: 0.9, g: 0.8, b: 0.7, a: 0.5 });
     }
 
-    /// Returns `true` if the vase was intact and is now broken.
-    pub fn smash(&mut self) -> bool {
-        if self.broken {
-            return false;
-        }
-        self.broken = true;
-        true
-    }
 }
 
 /// Torch direction for sprite selection

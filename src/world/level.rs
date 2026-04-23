@@ -2,6 +2,7 @@
 use macroquad::prelude::*;
 use crate::config::*;
 use crate::world::tiled_visual::{TiledVisualMap, TiledVisualRaw};
+use crate::world::items::invincible_flicker_hidden;
 use crate::world::{Chest, Enemy, EnemyKind, Item, ItemsAtlas, ItemType, TerrainAtlas, Torch, TorchDir, Vase};
 
 /// Screen-space rect for the door leaf overlay: bottom aligns with the bottom of the door anchor cell
@@ -387,36 +388,40 @@ impl Level {
         }
     }
 
+    /// Minimal 16×16 room when a TMX file is missing or invalid (L1 and L2 loaders).
+    fn level_tmx_unavailable_placeholder() -> Self {
+        let mut fallback = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
+        for y in 0..LEVEL1_H as i32 {
+            for x in 0..LEVEL1_W as i32 {
+                if x == 0 || y == 0 || x == LEVEL1_W as i32 - 1 || y == LEVEL1_H as i32 - 1 {
+                    fallback.set_tile(x, y, Tile::SolidWall);
+                } else {
+                    fallback.set_tile(x, y, Tile::Floor);
+                }
+            }
+        }
+        fallback.set_tile(LEVEL1_W as i32 - 2, 1, Tile::Door);
+        fallback.spawn_x = 1;
+        fallback.spawn_y = 1;
+        let dx = LEVEL1_W as i32 - 2;
+        let dy = 1;
+        fallback.door_x = dx;
+        fallback.door_y = dy;
+        fallback.door_w = 1;
+        fallback.door_h = 1;
+        fallback.exit_x = dx;
+        fallback.exit_y = dy;
+        fallback.exit_w = 1;
+        fallback.exit_h = 1;
+        fallback
+    }
+
     pub fn load_level_1_tmx() -> Self {
         match crate::world::tmx_loader::load_level_from_tmx("assets/levels/level1.tmx") {
             Ok(level) => level,
             Err(err) => {
                 error!("L1 TMX load failed: {}", err);
-                // Keep startup resilient even if the TMX file is missing/corrupt.
-                let mut fallback = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
-                for y in 0..LEVEL1_H as i32 {
-                    for x in 0..LEVEL1_W as i32 {
-                        if x == 0 || y == 0 || x == LEVEL1_W as i32 - 1 || y == LEVEL1_H as i32 - 1 {
-                            fallback.set_tile(x, y, Tile::SolidWall);
-                        } else {
-                            fallback.set_tile(x, y, Tile::Floor);
-                        }
-                    }
-                }
-                fallback.set_tile(LEVEL1_W as i32 - 2, 1, Tile::Door);
-                fallback.spawn_x = 1;
-                fallback.spawn_y = 1;
-                let dx = LEVEL1_W as i32 - 2;
-                let dy = 1;
-                fallback.door_x = dx;
-                fallback.door_y = dy;
-                fallback.door_w = 1;
-                fallback.door_h = 1;
-                fallback.exit_x = dx;
-                fallback.exit_y = dy;
-                fallback.exit_w = 1;
-                fallback.exit_h = 1;
-                fallback
+                Self::level_tmx_unavailable_placeholder()
             }
         }
     }
@@ -425,28 +430,18 @@ impl Level {
         Self::load_level_1_tmx()
     }
 
+    pub fn load_level_2_tmx() -> Self {
+        match crate::world::tmx_loader::load_level_from_tmx("assets/levels/level2.tmx") {
+            Ok(level) => level,
+            Err(err) => {
+                error!("L2 TMX load failed: {}", err);
+                Self::level_tmx_unavailable_placeholder()
+            }
+        }
+    }
+
     pub fn load_level_2() -> Self {
-        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
-        let layout = [
-            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",
-            "#..............#",
-            "#..####.####...#",
-            "#..#Z#...H.#...E#",
-            "#..####......###",
-            "#....####..#...#",
-            "#..............#",
-            "#..####...#....#",
-            "#@.....Z..#....#",
-            "#..####...####.#",
-            "#..............#",
-            "#.......Z......#",
-            "#......#####...#",
-            "#..............#",
-            "#...C......BP..#",
-            "################",
-        ];
-        level.parse_layout(&layout);
-        level
+        Self::load_level_2_tmx()
     }
 
     pub fn load_level_3() -> Self {
@@ -692,6 +687,26 @@ impl Level {
         !t.is_solid()
     }
 
+    /// `vase_shine` tile skip this frame: smashed, or pre-break flicker “off” phase.
+    fn vase_shine_tiled_skips(&self) -> Vec<(i32, i32)> {
+        let mut out: Vec<(i32, i32)> = self
+            .vases
+            .iter()
+            .filter(|v| v.tiled_sprite && v.broken)
+            .map(|v| (v.grid_x, v.grid_y))
+            .collect();
+        for v in &self.vases {
+            if v.tiled_sprite
+                && !v.broken
+                && v.shatter_timer > 0.0
+                && invincible_flicker_hidden(v.shatter_timer)
+            {
+                out.push((v.grid_x, v.grid_y));
+            }
+        }
+        out
+    }
+
     pub fn update(&mut self, dt: f32) {
         for gate in &mut self.gates {
             gate.update(dt);
@@ -704,6 +719,19 @@ impl Level {
         }
         for chest in &mut self.chests {
             chest.update(dt);
+        }
+        for v in &mut self.vases {
+            if v.shatter_timer > 0.0 {
+                v.shatter_timer -= dt;
+                if v.shatter_timer <= 0.0 {
+                    v.shatter_timer = 0.0;
+                    v.broken = true;
+                    let n = macroquad::rand::gen_range(1, 6);
+                    for _ in 0..n {
+                        self.items.push(Item::new(v.grid_x, v.grid_y, ItemType::Coin));
+                    }
+                }
+            }
         }
     }
 
@@ -719,13 +747,8 @@ impl Level {
             // ─── Tiled visual path ────────────────────────────────────────────────
             // Render all Tiled tile layers (floor, walls, decoration) from the TMX
             // map. Then draw gameplay-logic overlays on top.
-            let broken_tiled_vases: Vec<(i32, i32)> = self
-                .vases
-                .iter()
-                .filter(|v| v.tiled_sprite && v.broken)
-                .map(|v| (v.grid_x, v.grid_y))
-                .collect();
-            tiled.draw(camera_x, camera_y, &broken_tiled_vases);
+            let vase_skips = self.vase_shine_tiled_skips();
+            tiled.draw(camera_x, camera_y, &vase_skips);
             // Object-layer `torch` entities (and legacy torches not on a tile layer): not part of Tiled cells.
             if let Some(atlas) = items_atlas {
                 for torch in &self.torches {
@@ -736,8 +759,6 @@ impl Level {
                     torch.draw(camera_x, camera_y);
                 }
             }
-            // Exit marker / glow: drawn after foreground door art in `Game::draw_playing`
-            // (`draw_exit_tile_marker`) so it does not sit under transparent door pixels.
         } else {
             // ─── Fallback / generic path ──────────────────────────────────────────
             let start_x = (camera_x / TILE_SIZE).floor() as i32 - 1;
@@ -867,12 +888,7 @@ impl Level {
         player_grid_y: i32,
     ) {
         if let Some(ref tiled) = self.tiled_visual {
-            let broken_tiled_vases: Vec<(i32, i32)> = self
-                .vases
-                .iter()
-                .filter(|v| v.tiled_sprite && v.broken)
-                .map(|v| (v.grid_x, v.grid_y))
-                .collect();
+            let vase_skips = self.vase_shine_tiled_skips();
             tiled.draw_foreground_before_player(
                 camera_x,
                 camera_y,
@@ -881,7 +897,7 @@ impl Level {
                 self.door_unlocked,
                 self.door_x,
                 self.door_y,
-                &broken_tiled_vases,
+                &vase_skips,
             );
         }
     }
@@ -894,12 +910,7 @@ impl Level {
         player_grid_y: i32,
     ) {
         if let Some(ref tiled) = self.tiled_visual {
-            let broken_tiled_vases: Vec<(i32, i32)> = self
-                .vases
-                .iter()
-                .filter(|v| v.tiled_sprite && v.broken)
-                .map(|v| (v.grid_x, v.grid_y))
-                .collect();
+            let vase_skips = self.vase_shine_tiled_skips();
             tiled.draw_foreground_after_player(
                 camera_x,
                 camera_y,
@@ -908,7 +919,7 @@ impl Level {
                 self.door_unlocked,
                 self.door_x,
                 self.door_y,
-                &broken_tiled_vases,
+                &vase_skips,
             );
         }
     }
@@ -917,13 +928,8 @@ impl Level {
     /// does not cover them; see [`TiledVisualMap::draw_sconce_overlay`].
     pub fn draw_tiled_sconce_overlay(&self, camera_x: f32, camera_y: f32) {
         if let Some(ref tiled) = self.tiled_visual {
-            let broken_tiled_vases: Vec<(i32, i32)> = self
-                .vases
-                .iter()
-                .filter(|v| v.tiled_sprite && v.broken)
-                .map(|v| (v.grid_x, v.grid_y))
-                .collect();
-            tiled.draw_sconce_overlay(camera_x, camera_y, &broken_tiled_vases);
+            let vase_skips = self.vase_shine_tiled_skips();
+            tiled.draw_sconce_overlay(camera_x, camera_y, &vase_skips);
         }
     }
 
@@ -954,46 +960,13 @@ impl Level {
         compute_door_leaf_screen_rect(self.door_x, self.door_y, camera_x, camera_y)
     }
 
-    /// Full exit trigger area in screen space (for markers / level-complete pulse).
+    /// Full exit trigger area in screen space (e.g. level-complete pulse in `Game::draw_level_complete`).
     pub fn exit_zone_screen_rect(&self, camera_x: f32, camera_y: f32) -> (f32, f32, f32, f32) {
         let sx = self.exit_x as f32 * TILE_SIZE - camera_x;
         let sy = self.exit_y as f32 * TILE_SIZE - camera_y;
         let w = self.exit_w as f32 * TILE_SIZE;
         let h = self.exit_h as f32 * TILE_SIZE;
         (sx, sy, w, h)
-    }
-
-    /// Exit hint / glow, drawn after door sprites so semi-transparent door pixels are not tinted
-    /// by a rectangle drawn underneath.
-    pub fn draw_exit_tile_marker(&self, camera_x: f32, camera_y: f32) {
-        if self.tiled_visual.is_none() {
-            return;
-        }
-        let (sx, sy, zw, zh) = self.exit_zone_screen_rect(camera_x, camera_y);
-
-        if self.door_unlocked {
-            let glow_time = (get_time() * 2.0) as f32;
-            let glow_alpha = 0.22 + glow_time.sin() * 0.10;
-            draw_rectangle(
-                sx - 3.0,
-                sy - 3.0,
-                zw + 6.0,
-                zh + 6.0,
-                Color { r: 0.35, g: 0.88, b: 1.0, a: glow_alpha },
-            );
-        } else {
-            let pulse_t = (get_time() as f32 * 1.5).sin() * 0.5 + 0.5;
-            let marker_a = 0.35 + pulse_t * 0.25;
-            let inset = 4.0_f32;
-            draw_rectangle_lines(
-                sx + inset,
-                sy + inset,
-                zw - 2.0 * inset,
-                zh - 2.0 * inset,
-                3.0,
-                Color { r: 0.45, g: 0.72, b: 1.0, a: marker_a },
-            );
-        }
     }
 
     pub fn open_all_gates(&mut self) {

@@ -1,7 +1,7 @@
 // Dungeon Diver - Game State & Main Game Loop
 // Handles game states, update loop, and rendering
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use macroquad::prelude::*;
 use macroquad::audio::{Sound, load_sound, play_sound, stop_sound, PlaySoundParams, set_sound_volume};
@@ -9,7 +9,7 @@ use crate::config::*;
 use crate::input::*;
 use crate::rendering::Camera;
 use crate::entities::Player;
-use crate::world::tiled_visual::{TiledVisualMap, TiledVisualRaw};
+use crate::world::tiled_visual::TiledVisualMap;
 use crate::world::*;
 use crate::game::{GameSettings, ShutdownFlow};
 use crate::game::hit_vfx::{HitVfxAtlas, HitVfxInstance, HitVfxKind};
@@ -57,6 +57,8 @@ pub struct Game {
     menu_click_index: Option<usize>,
     menu_click_timer: f32,
     pub screen_flash: f32,
+    /// Red vignette on real damage; decays with `screen_flash` in `update()`.
+    damage_flash: f32,
     pub coins: i32,
     current_level: u8,
     /// Run stats (reset when starting a new game from the title / Play again).
@@ -96,9 +98,7 @@ pub struct Game {
     hit_vfx_atlas: Option<HitVfxAtlas>,
     hit_vfx_instances: Vec<HitVfxInstance>,
     spike_timer: f32,
-    /// Tiled visual raw data for level 1. Populated by `load_tiled_textures`.
-    tiled_visual_raw_l1: Option<TiledVisualRaw>,
-    /// Textures loaded from tileset PNGs referenced by level 1 TMX.
+    /// Tileset PNGs referenced by TMX levels (L1, L2, … pre-scanned in `load_tiled_textures`).
     tiled_textures: HashMap<String, Texture2D>,
     // --- Audio and Settings ---
     /// Looped on title / main menu (`intro_music.mp3`).
@@ -122,6 +122,12 @@ pub struct Game {
 }
 
 impl Game {
+    /// Camera shake + red flash (enemy hit or spikes).
+    fn trigger_hurt_reaction(&mut self) {
+        self.camera.shake();
+        self.damage_flash = HURT_REACTION_FLASH;
+    }
+
     fn spawn_hit_vfx(&mut self, kind: HitVfxKind, tile_x: i32, tile_y: i32, facing: Direction) {
         if self.hit_vfx_atlas.is_some() {
             self.hit_vfx_instances.push(HitVfxInstance::spawn(kind, tile_x, tile_y, facing));
@@ -142,6 +148,7 @@ impl Game {
             menu_click_index: None,
             menu_click_timer: 0.0,
             screen_flash: 0.0,
+            damage_flash: 0.0,
             coins: 0,
             current_level: 1,
             run_enemies_killed: 0,
@@ -167,7 +174,6 @@ impl Game {
             hit_vfx_atlas: None,
             hit_vfx_instances: Vec::new(),
             spike_timer: 0.0,
-            tiled_visual_raw_l1: None,
             tiled_textures: HashMap::new(),
             intro_music: None,
             gameplay_music: None,
@@ -205,30 +211,34 @@ impl Game {
         self.hit_vfx_atlas = HitVfxAtlas::load().await;
     }
 
-    /// Parse level1.tmx (already preloaded on WASM) to discover which tileset
-    /// PNGs it uses, then load those textures via macroquad. Must be called
-    /// after `preload_level_tmx_for_wasm` and before `start()`.
+    /// Parse TMX level files (preloaded on WASM) to collect tileset PNG paths, then load textures.
+    /// Must be called after `preload_level_tmx_for_wasm` and before `start()`.
     pub async fn load_tiled_textures(&mut self) {
-        let level = match crate::world::tmx_loader::load_level_from_tmx("assets/levels/level1.tmx") {
-            Ok(l) => l,
-            Err(e) => {
-                error!("load_tiled_textures: failed to parse level1.tmx — {e}");
-                return;
+        let mut paths: HashSet<String> = HashSet::new();
+        for tmx in ["assets/levels/level1.tmx", "assets/levels/level2.tmx"] {
+            match crate::world::tmx_loader::load_level_from_tmx(tmx) {
+                Ok(level) => {
+                    if let Some(raw) = level.tiled_visual_raw {
+                        for p in raw.image_paths() {
+                            paths.insert(p);
+                        }
+                    } else {
+                        error!("load_tiled_textures: no TiledVisualRaw in {tmx}");
+                    }
+                }
+                Err(e) => {
+                    error!("load_tiled_textures: failed to parse {tmx} — {e}");
+                }
             }
-        };
+        }
 
-        let raw = match level.tiled_visual_raw {
-            Some(r) => r,
-            None => {
-                error!("load_tiled_textures: no TiledVisualRaw in parsed level");
-                return;
-            }
-        };
+        if paths.is_empty() {
+            return;
+        }
+        let path_vec: Vec<String> = paths.into_iter().collect();
+        info!("Tiled: loading {} unique tileset PNG(s): {:?}", path_vec.len(), path_vec);
 
-        let paths = raw.image_paths();
-        info!("Tiled: loading {} tileset PNG(s): {:?}", paths.len(), paths);
-
-        for path in &paths {
+        for path in &path_vec {
             if self.tiled_textures.contains_key(path) {
                 continue;
             }
@@ -243,8 +253,20 @@ impl Game {
             }
         }
 
-        info!("Tiled textures loaded: {}/{}", self.tiled_textures.len(), paths.len());
-        self.tiled_visual_raw_l1 = Some(raw);
+        info!("Tiled textures loaded: {}/{}", self.tiled_textures.len(), path_vec.len());
+    }
+
+    /// Rebuilds [`Level::tiled_visual`] from the current level’s TMX raw + loaded tileset textures.
+    fn refresh_level_tiled_visual(&mut self) {
+        if let Some(level) = self.level.as_mut() {
+            if let Some(raw) = level.tiled_visual_raw.clone() {
+                if !self.tiled_textures.is_empty() {
+                    level.tiled_visual = Some(TiledVisualMap::build(raw, self.tiled_textures.clone()));
+                    return;
+                }
+            }
+            level.tiled_visual = None;
+        }
     }
 
     pub async fn load_font(&mut self) {
@@ -407,13 +429,9 @@ impl Game {
         self.win_menu_selection = 0;
 
         self.level = Some(Level::load_level_1());
-
-        // Build TiledVisualMap for level 1 if textures were successfully loaded.
-        if let (Some(level), Some(raw)) = (self.level.as_mut(), self.tiled_visual_raw_l1.clone()) {
-            if !self.tiled_textures.is_empty() {
-                level.tiled_visual = Some(TiledVisualMap::build(raw, self.tiled_textures.clone()));
-                info!("TiledVisualMap attached to level 1");
-            }
+        self.refresh_level_tiled_visual();
+        if self.level.as_ref().is_some_and(|l| l.tiled_visual.is_some()) {
+            info!("TiledVisualMap attached to current level");
         }
 
         let level = self.level.as_ref().unwrap();
@@ -505,6 +523,9 @@ impl Game {
         // Update screen flash
         if self.screen_flash > 0.0 {
             self.screen_flash -= dt;
+        }
+        if self.damage_flash > 0.0 {
+            self.damage_flash -= dt;
         }
 
         if let Some(s) = &self.intro_music {
@@ -628,6 +649,7 @@ impl Game {
         let mut queued_vfx: Vec<(HitVfxKind, i32, i32, Direction)> = Vec::new();
         let mut combat_sfx_events: Vec<CombatSfxEvent> = Vec::new();
         let mut should_open_gates = false;
+        let mut want_hurt_reaction = false;
         if let (Some(ref mut level), Some(ref mut player)) = (&mut self.level, &mut self.player) {
             player.update(dt, level, actions);
 
@@ -736,26 +758,26 @@ impl Game {
                 }
 
                 if !hit_enemy {
-                    let mut broke_vase = false;
+                    let mut hit_vase = false;
                     for vase in &mut level.vases {
-                        if vase.broken || vase.grid_x != attack_x || vase.grid_y != attack_y {
+                        if vase.grid_x != attack_x || vase.grid_y != attack_y {
                             continue;
                         }
-                        if vase.smash() {
-                            broke_vase = true;
-                            let n = macroquad::rand::gen_range(1, 6);
-                            for _ in 0..n {
-                                level.items.push(crate::world::Item::new(
-                                    attack_x,
-                                    attack_y,
-                                    crate::world::ItemType::Coin,
-                                ));
-                            }
+                        if vase.broken {
+                            break;
+                        }
+                        if vase.shatter_timer > 0.0 {
+                            // Already flickering from a prior swing: still a “hit” (no whiff SFX).
+                            hit_vase = true;
+                            break;
+                        }
+                        if vase.start_shatter_windup() {
+                            hit_vase = true;
                             combat_sfx_events.push(CombatSfxEvent::PlayerSwingHit);
                         }
                         break;
                     }
-                    if !broke_vase {
+                    if !hit_vase {
                         combat_sfx_events.push(CombatSfxEvent::PlayerSwingMiss);
                     }
                 }
@@ -774,7 +796,9 @@ impl Game {
                     && player.facing == enemy.facing.opposite()
                 {
                     if player.invincible_time <= 0.0 {
-                        player.take_damage(enemy.damage_for());
+                        if player.take_damage(enemy.damage_for()) {
+                            want_hurt_reaction = true;
+                        }
                     }
                     enemy.attack_cooldown = enemy.attack_cooldown_for();
                     queued_vfx.push((HitVfxKind::EnemyHit, attack_x, attack_y, enemy.facing));
@@ -786,7 +810,9 @@ impl Game {
             let spike_local = (self.spike_timer + spike_offset) % 3.0;
             let spikes_active = spike_local < 1.0;
             if spikes_active && level.get_tile(player.grid_x, player.grid_y) == Tile::Spikes {
-                player.take_damage(1);
+                if player.take_damage(1) {
+                    want_hurt_reaction = true;
+                }
             }
 
             // Remove enemies whose death animation has finished.
@@ -802,6 +828,10 @@ impl Game {
             if !player.is_alive() {
                 self.state = GameState::GameOver;
             }
+        }
+
+        if want_hurt_reaction {
+            self.trigger_hurt_reaction();
         }
 
         for k in pickup_sfx {
@@ -971,6 +1001,7 @@ impl Game {
         let prev_shields = self.player.as_ref().map(|p| p.shield_charges);
 
         self.level = Some(level);
+        self.refresh_level_tiled_visual();
         let mut player = Player::new(spawn_x, spawn_y);
 
         if let Some(hp) = prev_hp {
@@ -1040,6 +1071,16 @@ impl Game {
             draw_rectangle(
                 0.0, 0.0, SCREEN_W, SCREEN_H,
                 Color { r: 1.0, g: 1.0, b: 1.0, a: self.screen_flash }
+            );
+        }
+        if self.damage_flash > 0.0 {
+            let a = (self.damage_flash * 1.15).min(0.4);
+            draw_rectangle(
+                0.0,
+                0.0,
+                SCREEN_W,
+                SCREEN_H,
+                Color { r: 0.9, g: 0.12, b: 0.1, a },
             );
         }
     }
@@ -1129,8 +1170,6 @@ impl Game {
             level.draw_tiled_sconce_overlay(cam_x, cam_y);
             // Exit door: TMX keeps closed tiles; overlay open leaf when `door_unlocked` (key/chest).
             level.draw_exit_door_unlock_overlay(cam_x, cam_y, self.items_atlas.as_ref());
-            // Marker / glow on top so it does not bleed through transparent door pixels from below.
-            level.draw_exit_tile_marker(cam_x, cam_y);
 
             if let Some(ref atlas) = self.hit_vfx_atlas {
                 for fx in &self.hit_vfx_instances {

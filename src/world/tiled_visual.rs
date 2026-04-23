@@ -4,6 +4,28 @@ use macroquad::prelude::*;
 
 use crate::config::{SCREEN_TILES_H, SCREEN_TILES_W, TILE_SIZE};
 
+/// Maps Tiled tile flip flags to macroquad [`DrawTextureParams`] `rotation` (radians) and mirrors.
+/// Follows the usual TMX + [`tiled::LayerTileData`] model and the cocos2d-x `CCTMXLayer::setupTileSprite` split
+/// for the diagonal case (rotation + optional `flip_x` when the diagonal bit is set).
+pub fn tiled_flips_to_rotation_and_mirror(
+    flip_h: bool,
+    flip_v: bool,
+    flip_d: bool,
+) -> (f32, bool, bool) {
+    if !flip_d {
+        return (0.0, flip_h, flip_v);
+    }
+    // When `flip_d` is on, the other two select among 90°/270° and variants (Tiled has no free rotation).
+    const R90: f32 = std::f32::consts::FRAC_PI_2;
+    const R270: f32 = 3.0 * std::f32::consts::FRAC_PI_2;
+    match (flip_h, flip_v) {
+        (true, false) => (R90, false, false),
+        (false, true) => (R270, false, false),
+        (true, true) => (R90, true, false),
+        (false, false) => (R270, true, false),
+    }
+}
+
 /// A single animation frame.
 ///
 /// For spritesheet tilesets all frames share the same `image_path` but have
@@ -31,6 +53,8 @@ pub struct CellSprite {
     pub total_duration_ms: u64,
     pub flip_h: bool,
     pub flip_v: bool,
+    /// Tiled "flip diagonally" (TMX). Needed for 90°/270° style orientation; it is *not* only H/V.
+    pub flip_d: bool,
 }
 
 impl CellSprite {
@@ -122,9 +146,10 @@ impl TiledVisualMap {
     }
 
     #[inline]
-    fn skip_broken_tiled_vase_sprite(x: i32, y: i32, image_path: &str, broken_tiled_vases: &[(i32, i32)]) -> bool {
-        broken_tiled_vases.iter().any(|&(bx, by)| bx == x && by == y)
-            && image_path.contains("vase_shine_anim")
+    /// Skip `vase_shine` tile: cell is smashed, or pre-break flicker (same list as `Level::vase_shine_tiled_skips`).
+    fn skip_tiled_vase_shine(x: i32, y: i32, image_path: &str, vase_shine_skips: &[(i32, i32)]) -> bool {
+        image_path.contains("vase_shine_anim")
+            && vase_shine_skips.iter().any(|&(bx, by)| bx == x && by == y)
     }
 
     #[inline]
@@ -149,8 +174,8 @@ impl TiledVisualMap {
     }
 
     /// Draw all tile layers, camera-culled to visible screen area.
-    /// `broken_tiled_vases`: grid cells where a `vase_shine_anim` tile was smashed (hide decoration art).
-    pub fn draw(&self, camera_x: f32, camera_y: f32, broken_tiled_vases: &[(i32, i32)]) {
+    /// `tiled_vase_shine_skips`: grid cells to hide `vase_shine` (smashed or pre-break flicker off-phase).
+    pub fn draw(&self, camera_x: f32, camera_y: f32, tiled_vase_shine_skips: &[(i32, i32)]) {
         let map_w = self.raw.map_width as i32;
         let map_h = self.raw.map_height as i32;
 
@@ -167,7 +192,7 @@ impl TiledVisualMap {
                 for x in start_x..end_x {
                     let Some(cell) = layer.get(x, y) else { continue };
                     let frame = cell.current_frame(time_ms);
-                    if Self::skip_broken_tiled_vase_sprite(x, y, &frame.image_path, broken_tiled_vases) {
+                    if Self::skip_tiled_vase_shine(x, y, &frame.image_path, tiled_vase_shine_skips) {
                         continue;
                     }
                     let is_torch_layer = layer.name.eq_ignore_ascii_case("torchs")
@@ -199,6 +224,11 @@ impl TiledVisualMap {
                     // Tiled aligns oversized sprites to the bottom of the cell (orthogonal).
                     let draw_x = screen_x;
                     let draw_y = screen_y + TILE_SIZE - dest_h;
+                    let (rot, mirror_x, mirror_y) = tiled_flips_to_rotation_and_mirror(
+                        cell.flip_h,
+                        cell.flip_v,
+                        cell.flip_d,
+                    );
 
                     draw_texture_ex(
                         tex,
@@ -208,8 +238,9 @@ impl TiledVisualMap {
                         DrawTextureParams {
                             source: Some(frame.src),
                             dest_size: Some(vec2(dest_w, dest_h)),
-                            flip_x: cell.flip_h,
-                            flip_y: cell.flip_v,
+                            rotation: rot,
+                            flip_x: mirror_x,
+                            flip_y: mirror_y,
                             ..Default::default()
                         },
                     );
@@ -225,7 +256,7 @@ impl TiledVisualMap {
         &self,
         camera_x: f32,
         camera_y: f32,
-        broken_tiled_vases: &[(i32, i32)],
+        tiled_vase_shine_skips: &[(i32, i32)],
     ) {
         let map_w = self.raw.map_width as i32;
         let map_h = self.raw.map_height as i32;
@@ -243,7 +274,7 @@ impl TiledVisualMap {
                 for x in start_x..end_x {
                     let Some(cell) = layer.get(x, y) else { continue };
                     let frame = cell.current_frame(time_ms);
-                    if Self::skip_broken_tiled_vase_sprite(x, y, &frame.image_path, broken_tiled_vases) {
+                    if Self::skip_tiled_vase_shine(x, y, &frame.image_path, tiled_vase_shine_skips) {
                         continue;
                     }
                     if !Self::is_deferred_sconce_path(&frame.image_path) {
@@ -261,6 +292,11 @@ impl TiledVisualMap {
                     let screen_y = y as f32 * TILE_SIZE - camera_y;
                     let draw_x = screen_x;
                     let draw_y = screen_y + TILE_SIZE - dest_h;
+                    let (rot, mirror_x, mirror_y) = tiled_flips_to_rotation_and_mirror(
+                        cell.flip_h,
+                        cell.flip_v,
+                        cell.flip_d,
+                    );
                     draw_texture_ex(
                         tex,
                         draw_x,
@@ -269,8 +305,9 @@ impl TiledVisualMap {
                         DrawTextureParams {
                             source: Some(frame.src),
                             dest_size: Some(vec2(dest_w, dest_h)),
-                            flip_x: cell.flip_h,
-                            flip_y: cell.flip_v,
+                            rotation: rot,
+                            flip_x: mirror_x,
+                            flip_y: mirror_y,
                             ..Default::default()
                         },
                     );
@@ -291,7 +328,7 @@ impl TiledVisualMap {
         door_unlocked: bool,
         door_grid_x: i32,
         door_grid_y: i32,
-        broken_tiled_vases: &[(i32, i32)],
+        tiled_vase_shine_skips: &[(i32, i32)],
     ) {
         self.draw_foreground_pass(
             camera_x,
@@ -302,7 +339,7 @@ impl TiledVisualMap {
             door_unlocked,
             door_grid_x,
             door_grid_y,
-            broken_tiled_vases,
+            tiled_vase_shine_skips,
         );
     }
 
@@ -317,7 +354,7 @@ impl TiledVisualMap {
         door_unlocked: bool,
         door_grid_x: i32,
         door_grid_y: i32,
-        broken_tiled_vases: &[(i32, i32)],
+        tiled_vase_shine_skips: &[(i32, i32)],
     ) {
         self.draw_foreground_pass(
             camera_x,
@@ -328,7 +365,7 @@ impl TiledVisualMap {
             door_unlocked,
             door_grid_x,
             door_grid_y,
-            broken_tiled_vases,
+            tiled_vase_shine_skips,
         );
     }
 
@@ -370,7 +407,7 @@ impl TiledVisualMap {
         door_unlocked: bool,
         door_grid_x: i32,
         door_grid_y: i32,
-        broken_tiled_vases: &[(i32, i32)],
+        tiled_vase_shine_skips: &[(i32, i32)],
     ) {
         let map_w = self.raw.map_width as i32;
         let map_h = self.raw.map_height as i32;
@@ -396,7 +433,7 @@ impl TiledVisualMap {
                     for x in start_x..end_x {
                         let Some(cell) = layer.get(x, y) else { continue };
                         let frame = cell.current_frame(time_ms);
-                        if Self::skip_broken_tiled_vase_sprite(x, y, &frame.image_path, broken_tiled_vases) {
+                        if Self::skip_tiled_vase_shine(x, y, &frame.image_path, tiled_vase_shine_skips) {
                             continue;
                         }
                         if frame.src.h <= self.map_tile_h() && !is_torch_layer {
@@ -431,6 +468,11 @@ impl TiledVisualMap {
                         let screen_x = x as f32 * TILE_SIZE - camera_x;
                         let screen_y = y as f32 * TILE_SIZE - camera_y;
                         let draw_y = screen_y + TILE_SIZE - dest_h;
+                        let (rot, mirror_x, mirror_y) = tiled_flips_to_rotation_and_mirror(
+                            cell.flip_h,
+                            cell.flip_v,
+                            cell.flip_d,
+                        );
 
                         draw_texture_ex(
                             tex,
@@ -440,8 +482,9 @@ impl TiledVisualMap {
                             DrawTextureParams {
                                 source: Some(frame.src),
                                 dest_size: Some(vec2(dest_w, dest_h)),
-                                flip_x: cell.flip_h,
-                                flip_y: cell.flip_v,
+                                rotation: rot,
+                                flip_x: mirror_x,
+                                flip_y: mirror_y,
                                 ..Default::default()
                             },
                         );

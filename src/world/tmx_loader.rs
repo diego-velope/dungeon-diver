@@ -23,10 +23,12 @@ static WASM_LEVEL_TMX_RESOURCES: OnceLock<Arc<HashMap<String, Vec<u8>>>> = OnceL
 /// PNGs are NOT read during parse — they are loaded separately by macroquad.
 /// Used only on WASM (native uses std::fs directly).
 #[cfg(target_arch = "wasm32")]
-const LEVEL1_TMX_WASM_PRELOADS: &[&str] = &[
+const TMX_WASM_PRELOADS: &[&str] = &[
     "assets/levels/level1.tmx",
+    "assets/levels/level2.tmx",
     "assets/levels/dungeon_tileset_ii.tsx",
     "assets/levels/decoration.tsx",
+    "assets/levels/columns.tsx",
     "assets/levels/vase_shine_anim.tsx",
     "assets/levels/abyss.tsx",
     "assets/levels/torch_default_tileset.tsx",
@@ -138,7 +140,13 @@ pub fn build_tiled_visual_raw(map: &Map) -> TiledVisualRaw {
                         )
                     };
 
-                    Some(CellSprite { frames, total_duration_ms: total_ms, flip_h: t.flip_h, flip_v: t.flip_v })
+                    Some(CellSprite {
+                        frames,
+                        total_duration_ms: total_ms,
+                        flip_h: t.flip_h,
+                        flip_v: t.flip_v,
+                        flip_d: t.flip_d,
+                    })
                 } else {
                     // ── Image-collection tileset (each tile is its own PNG) ──
                     let anim_def = t.get_tile().and_then(|tile| tile.animation.clone());
@@ -155,7 +163,13 @@ pub fn build_tiled_visual_raw(map: &Map) -> TiledVisualRaw {
                         if frames.is_empty() {
                             None
                         } else {
-                            Some(CellSprite { frames, total_duration_ms: total, flip_h: t.flip_h, flip_v: t.flip_v })
+                            Some(CellSprite {
+                                frames,
+                                total_duration_ms: total,
+                                flip_h: t.flip_h,
+                                flip_v: t.flip_v,
+                                flip_d: t.flip_d,
+                            })
                         }
                     } else {
                         // Static tile in image-collection tileset.
@@ -168,6 +182,7 @@ pub fn build_tiled_visual_raw(map: &Map) -> TiledVisualRaw {
                                     total_duration_ms: 0,
                                     flip_h: t.flip_h,
                                     flip_v: t.flip_v,
+                                    flip_d: t.flip_d,
                                 })
                             } else {
                                 None
@@ -242,7 +257,7 @@ fn path_lookup_key(path: &Path) -> String {
 /// WASM (no `std::fs`). Call once from `main` before starting a run. Safe to call on native; it
 /// is a no-op outside WASM.
 ///
-/// All paths in [`LEVEL1_TMX_WASM_PRELOADS`] must load successfully; otherwise the bundle is not
+/// All paths in [`TMX_WASM_PRELOADS`] must load successfully; otherwise the bundle is not
 /// installed and level 1 will fall back to the placeholder layout (easy to mistake for “wrong map”).
 pub async fn preload_level_tmx_for_wasm() {
     #[cfg(target_arch = "wasm32")]
@@ -250,7 +265,7 @@ pub async fn preload_level_tmx_for_wasm() {
         use macroquad::file::load_file;
 
         let mut map = HashMap::new();
-        for p in LEVEL1_TMX_WASM_PRELOADS {
+        for p in TMX_WASM_PRELOADS {
             match load_file(p).await {
                 Ok(bytes) => {
                     map.insert(p.to_string(), bytes);
@@ -263,9 +278,9 @@ pub async fn preload_level_tmx_for_wasm() {
                 }
             }
         }
-        if map.len() == LEVEL1_TMX_WASM_PRELOADS.len() {
+        if map.len() == TMX_WASM_PRELOADS.len() {
             let _ = WASM_LEVEL_TMX_RESOURCES.set(Arc::new(map));
-            macroquad::prelude::info!("WASM TMX preload OK ({} files)", LEVEL1_TMX_WASM_PRELOADS.len());
+            macroquad::prelude::info!("WASM TMX preload OK ({} files)", TMX_WASM_PRELOADS.len());
         }
     }
 }

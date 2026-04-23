@@ -224,6 +224,12 @@ pub const MAX_PARTICLES: usize = 100;
 pub const PARTICLE_LIFESPAN: f32 = 0.5;
 pub const SCREEN_SHAKE_DURATION: f32 = 0.15;
 pub const SCREEN_SHAKE_INTENSITY: f32 = 3.0;
+/// Full-screen red flash intensity (0–1); paired with `Camera::shake` on real damage.
+pub const HURT_REACTION_FLASH: f32 = 0.26;
+/// Slices of `invincible_time` / shatter-windup time where the sprite is hidden (see `Player::draw`).
+pub const IFRAME_FLASH_SLICE: f32 = 0.1;
+/// Pre-break: vase flickers (same as player iframes) for this long, then shatters and drops coins.
+pub const VASE_SHATTER_WINDUP: f32 = 0.32;
 
 // ============================================================================
 // TEXT SIZES (TV-optimized, 10ft viewing)

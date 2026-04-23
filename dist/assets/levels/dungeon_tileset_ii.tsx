@@ -723,7 +723,7 @@
  <tile id="515">
   <image source="../tileset/dungeon_tileset_ii/darkness_right.png" width="32" height="32"/>
  </tile>
- <tile id="516">
+ <tile id="516" x="0" y="0" width="32" height="16">
   <image source="../tileset/dungeon_tileset_ii/darkness_top.png" width="32" height="32"/>
  </tile>
 </tileset>

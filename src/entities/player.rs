@@ -4,6 +4,7 @@
 use macroquad::prelude::*;
 use crate::config::*;
 use crate::input::*;
+use crate::world::items::invincible_flicker_hidden;
 use crate::world::Level;
 
 /// Animation states for the player
@@ -241,17 +242,17 @@ impl Player {
         (1.0 - (self.attack_cooldown / PLAYER_ATTACK_COOLDOWN)).clamp(0.0, 1.0)
     }
 
-    /// Take damage
-    pub fn take_damage(&mut self, amount: i32) {
+    /// Take damage. Returns `true` if a hit was applied (not blocked by invincibility).
+    pub fn take_damage(&mut self, amount: i32) -> bool {
         if self.invincible_time > 0.0 {
-            return;
+            return false;
         }
 
         if self.shield_charges > 0 {
             self.shield_charges = (self.shield_charges - 1).max(0);
             self.invincible_time = PLAYER_INVINCIBLE_TIME * 0.5;
             self.anim_state = AnimState::Hurt;
-            return;
+            return true;
         }
 
         self.hp -= amount;
@@ -262,6 +263,7 @@ impl Player {
             self.hp = 0;
             self.anim_state = AnimState::Death;
         }
+        true
     }
 
     /// Heal the player
@@ -344,12 +346,8 @@ impl Player {
         let screen_x = self.x - camera_x;
         let screen_y = self.y - camera_y;
 
-        // Flash when invincible
-        if self.invincible_time > 0.0 {
-            let flash_rate = 0.1;
-            if ((self.invincible_time % flash_rate) / flash_rate) > 0.5 {
-                return; // Skip drawing for flash effect
-            }
+        if self.invincible_time > 0.0 && invincible_flicker_hidden(self.invincible_time) {
+            return; // Iframe flicker: skip some frames
         }
 
         // Draw sprite if loaded, otherwise draw placeholder
