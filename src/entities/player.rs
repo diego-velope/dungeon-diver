@@ -101,14 +101,13 @@ impl Player {
 
     /// Load player sprites from assets
     pub async fn load_sprites(&mut self) {
-        // Load Blue Knight sprites
-        if let Ok(tex) = load_texture("assets/dg_knight/Blue Knight idle Sprite-sheet 16x16.png").await {
+        if let Ok(tex) = load_texture("assets/sprites/player/bk-idle-spritesheet.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.idle_frame_count = Self::derive_frame_count(tex.width(), KNIGHT_IDLE_FRAME_W);
             self.idle_sprite = Some(tex);
         }
 
-        if let Ok(tex) = load_texture("assets/dg_knight/Blue Knight run Sprite-sheet 16x17.png").await {
+        if let Ok(tex) = load_texture("assets/sprites/player/bk-run-spritesheet.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.run_frame_count = Self::derive_frame_count(tex.width(), KNIGHT_RUN_FRAME_W);
             self.run_sprite = Some(tex);
@@ -442,8 +441,11 @@ impl Player {
         self.hp > 0
     }
 
-    /// Check if player is at the exit
+    /// Check if player is on any tile of the exit zone (see `Level::exit_w` / `exit_h`).
     pub fn at_exit(&self, level: &Level) -> bool {
-        self.grid_x == level.exit_x && self.grid_y == level.exit_y
+        self.grid_x >= level.exit_x
+            && self.grid_x < level.exit_x + level.exit_w
+            && self.grid_y >= level.exit_y
+            && self.grid_y < level.exit_y + level.exit_h
     }
 }

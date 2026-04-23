@@ -9,6 +9,8 @@ pub struct ItemsAtlas {
     pub chest_full_open: Vec<Texture2D>,  // 3 frames
     pub chest_empty_open: Vec<Texture2D>, // 3 frames
     pub key_tex: Texture2D,
+    pub gate_closed_tex: Texture2D,
+    pub gate_open_tex: Texture2D,
 
     // Coin visuals (dg_gathering_free_ver spritesheets)
     pub coin_sheet: Texture2D,
@@ -28,7 +30,7 @@ pub struct ItemsAtlas {
     pub shield_potion_big: Texture2D,
     pub shield_potion_small: Texture2D,
 
-    // Torches (dg_gathering_free_ver)
+    // Wall torches (horizontal strips in assets/tileset/decoration/)
     pub torch_left: Texture2D,
     pub torch_right: Texture2D,
     pub torch_top: Texture2D,
@@ -36,30 +38,29 @@ pub struct ItemsAtlas {
 
 impl ItemsAtlas {
     pub async fn load() -> Option<Self> {
-        let key_tex = load_texture("assets/0x72/key.png").await.ok()?;
-        let coin_sheet = load_texture("assets/dg_gathering_free_ver/Coin Sheet.png").await.ok()?;
-        let blue_coin_sheet = load_texture("assets/dg_gathering_free_ver/BlueCoin Sheet.png").await.ok()?;
-        let coin_bag = load_texture("assets/0x72/coin_bag.png").await.ok()?;
-        let heart_full = load_texture("assets/0x72/ui_heart_full.png").await.ok()?;
-        let heart_half = load_texture("assets/0x72/ui_heart_half.png").await.ok()?;
-        let heart_empty = load_texture("assets/0x72/ui_heart_empty.png").await.ok()?;
+        let key_tex = load_texture("assets/tileset/dungeon_tileset_ii/key.png").await.ok()?;
+        let gate_closed_tex = load_texture("assets/tileset/dungeon_tileset_ii/doors_leaf_closed.png").await.ok()?;
+        let gate_open_tex = load_texture("assets/tileset/dungeon_tileset_ii/doors_leaf_open.png").await.ok()?;
+        let coin_sheet = load_texture("assets/sprites/items/coin_sheet.png").await.ok()?;
+        let blue_coin_sheet = load_texture("assets/sprites/items/blue_coin_sheet.png").await.ok()?;
+        let coin_bag = load_texture("assets/tileset/dungeon_tileset_ii/coin_bag.png").await.ok()?;
+        let heart_full = load_texture("assets/tileset/dungeon_tileset_ii/ui_heart_full.png").await.ok()?;
+        let heart_half = load_texture("assets/tileset/dungeon_tileset_ii/ui_heart_half.png").await.ok()?;
+        let heart_empty = load_texture("assets/tileset/dungeon_tileset_ii/ui_heart_empty.png").await.ok()?;
 
-        // Load potions
-        let potion_big = load_texture("assets/dg_gathering_free_ver/potion_big_red_1.png").await.ok()?;
-        let potion_small = load_texture("assets/dg_gathering_free_ver/potion_small_red_2.png").await.ok()?;
-        let shield_potion_big = load_texture("assets/dg_gathering_free_ver/Potion 3.png").await.ok()?;
-        let shield_potion_small = load_texture("assets/dg_gathering_free_ver/Potion 4.png").await.ok()?;
+        let potion_big = load_texture("assets/sprites/items/big_health_potion.png").await.ok()?;
+        let potion_small = load_texture("assets/sprites/items/small_health_potion.png").await.ok()?;
+        let shield_potion_big = load_texture("assets/sprites/items/big_shield_potion.png").await.ok()?;
+        let shield_potion_small = load_texture("assets/sprites/items/small_shield_potion.png").await.ok()?;
 
-        // Load torches
-        let torch_left = load_texture("assets/dg_gathering_free_ver/torch_left.png").await.ok()?;
-        let torch_right = load_texture("assets/dg_gathering_free_ver/torch_right.png").await.ok()?;
-        let torch_top = load_texture("assets/dg_gathering_free_ver/torch_top.png").await.ok()?;
+        let torch_left = load_texture("assets/tileset/decoration/torch_left.png").await.ok()?;
+        let torch_right = load_texture("assets/tileset/decoration/torch_right.png").await.ok()?;
+        let torch_top = load_texture("assets/tileset/decoration/torch_top.png").await.ok()?;
 
-        // Load chest frame strips (0x72 exports each frame as its own named PNG).
         let mut chest_full_open = Vec::new();
         for f in 0..=2 {
             let tex = load_texture(&format!(
-                "assets/0x72/chest_full_open_anim_f{}.png",
+                "assets/tileset/dungeon_tileset_ii/chest_full_open_anim_f{}.png",
                 f
             ))
             .await
@@ -70,7 +71,7 @@ impl ItemsAtlas {
         let mut chest_empty_open = Vec::new();
         for f in 0..=2 {
             let tex = load_texture(&format!(
-                "assets/0x72/chest_empty_open_anim_f{}.png",
+                "assets/tileset/dungeon_tileset_ii/chest_empty_open_anim_f{}.png",
                 f
             ))
             .await
@@ -81,6 +82,8 @@ impl ItemsAtlas {
         // Ensure pixel art stays crisp.
         let key_tex = key_tex;
         key_tex.set_filter(FilterMode::Nearest);
+        gate_closed_tex.set_filter(FilterMode::Nearest);
+        gate_open_tex.set_filter(FilterMode::Nearest);
         for t in &mut chest_full_open {
             t.set_filter(FilterMode::Nearest);
         }
@@ -118,6 +121,8 @@ impl ItemsAtlas {
             chest_full_open,
             chest_empty_open,
             key_tex,
+            gate_closed_tex,
+            gate_open_tex,
             coin_sheet,
             blue_coin_sheet,
             coin_bag,
@@ -257,6 +262,7 @@ pub enum ItemType {
     Coin,
     BlueCoin,
     CoinBag,
+    Key,
     Potion,
     BigPotion,
     SmallPotion,
@@ -373,6 +379,26 @@ impl Item {
                     draw_rectangle_lines(dx + 8.0, dy + 10.0, 16.0, 18.0, 2.0, UI_BORDER);
                 }
             }
+            ItemType::Key => {
+                if let Some(atlas) = atlas {
+                    draw_texture_ex(
+                        &atlas.key_tex,
+                        dx,
+                        dy,
+                        WHITE,
+                        DrawTextureParams {
+                            dest_size: Some(vec2(TILE_SIZE, TILE_SIZE)),
+                            ..Default::default()
+                        },
+                    );
+                } else {
+                    let key_w = TILE_SIZE * 0.6;
+                    let key_h = TILE_SIZE * 0.28;
+                    draw_rectangle(dx + TILE_SIZE * 0.20, dy + TILE_SIZE * 0.36, key_w, key_h, GOLD);
+                    draw_circle(dx + TILE_SIZE * 0.18, dy + TILE_SIZE * 0.50, TILE_SIZE * 0.14, GOLD);
+                    draw_circle(dx + TILE_SIZE * 0.18, dy + TILE_SIZE * 0.50, TILE_SIZE * 0.07, LEVEL1_PALETTE.bg_bot);
+                }
+            }
             ItemType::Potion => {
                 if let Some(atlas) = atlas {
                     draw_texture_ex(
@@ -481,6 +507,7 @@ impl Item {
             ItemType::Coin => COIN_VALUE,
             ItemType::BlueCoin => COIN_VALUE * 2,
             ItemType::CoinBag => 5,
+            ItemType::Key => 0,
             ItemType::Potion => POTION_HEAL,
             ItemType::BigPotion => POTION_HEAL * 2,  // Big potion heals 2 HP
             ItemType::SmallPotion => POTION_HEAL,    // Small potion heals 1 HP
@@ -490,25 +517,29 @@ impl Item {
     }
 }
 
-/// Breakable vase
+/// Breakable vase (ASCII layout uses placeholder art; TMX `vase_shine_anim` tiles use `tiled_sprite`).
 pub struct Vase {
     pub grid_x: i32,
     pub grid_y: i32,
     pub broken: bool,
-    pub contents: Option<ItemType>,
+    /// Intact sprite is drawn by the Tiled `decoration` layer (`vase_shine_anim`); skip placeholder ellipse.
+    pub tiled_sprite: bool,
 }
 
 impl Vase {
-    pub fn new(grid_x: i32, grid_y: i32, contents: Option<ItemType>) -> Self {
+    pub fn new(grid_x: i32, grid_y: i32, tiled_sprite: bool) -> Self {
         Self {
             grid_x,
             grid_y,
             broken: false,
-            contents,
+            tiled_sprite,
         }
     }
 
     pub fn draw(&self, camera_x: f32, camera_y: f32) {
+        if self.tiled_sprite && !self.broken {
+            return;
+        }
         if self.broken {
             // Draw broken shards
             let screen_x = self.grid_x as f32 * TILE_SIZE + TILE_SIZE / 2.0 - camera_x;
@@ -536,12 +567,13 @@ impl Vase {
         draw_ellipse(screen_x - 5.0, screen_y - 6.0, 6.0, 8.0, 0.0, Color { r: 0.9, g: 0.8, b: 0.7, a: 0.5 });
     }
 
-    pub fn break_vase(&mut self) -> Option<ItemType> {
+    /// Returns `true` if the vase was intact and is now broken.
+    pub fn smash(&mut self) -> bool {
         if self.broken {
-            return None;
+            return false;
         }
         self.broken = true;
-        self.contents
+        true
     }
 }
 

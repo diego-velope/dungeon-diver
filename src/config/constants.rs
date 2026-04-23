@@ -25,6 +25,16 @@ pub const SCREEN_H: f32 = 720.0;
 pub const TILE_SIZE: f32 = 64.0;
 pub const TILE_SIZE_I: i32 = 64;
 
+/// Seconds for gate crossfade from `doors_leaf_closed` to `doors_leaf_open`.
+pub const GATE_OPEN_ANIM_DURATION: f32 = 0.5;
+
+/// Tiled map tile size for levels using `dungeon_tileset_ii` (authoring pixels per cell).
+pub const DUNGEON_TILESET_II_CELL_PX: f32 = 16.0;
+/// Native pixel size of `doors_leaf_*.png` in that tileset (2×2 cells).
+pub const DUNGEON_TILESET_II_DOOR_LEAF_PX: f32 = 32.0;
+/// How many 16×16 cells wide a typical `doors_leaf_*` spans (place `exit` on the left cell).
+pub const EXIT_DOOR_LEAF_TILE_SPAN_W: i32 = 2;
+
 // Grid dimensions in tiles (auto-calculated - fits level on screen)
 pub const SCREEN_TILES_W: i32 = (SCREEN_W / TILE_SIZE) as i32;  // 20 at 64px
 pub const SCREEN_TILES_H: i32 = (SCREEN_H / TILE_SIZE) as i32;  // 11 at 64px

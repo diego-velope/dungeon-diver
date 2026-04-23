@@ -5,6 +5,9 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST_DIR="$PROJECT_DIR/dist"
 WEB_DIR="$PROJECT_DIR/web"
 
+echo "==> Preparing audio assets..."
+"$PROJECT_DIR/scripts/prepare_audio.sh"
+
 echo "==> Building WASM (release)..."
 cargo build --release --target wasm32-unknown-unknown
 

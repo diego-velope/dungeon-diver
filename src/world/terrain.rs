@@ -1,4 +1,4 @@
-// Dungeon Diver — terrain rendering using 0x72 DungeonTileset II v1.7
+// Dungeon Diver — terrain rendering using DungeonTileset II sprites (`assets/tileset/dungeon_tileset_ii`).
 //
 // All source sprites are 16×16 px native, drawn at 2× → TILE_SIZE px.
 // (TILE_SIZE=64 means we scale 16→64 = 4×, handled by dest_size below)
@@ -25,7 +25,7 @@ pub struct TerrainAtlas {
 
 impl TerrainAtlas {
     pub async fn load() -> Option<Self> {
-        let p = "assets/0x72";
+        let p = "assets/tileset/dungeon_tileset_ii";
 
         macro_rules! tex {
             ($name:expr) => {{

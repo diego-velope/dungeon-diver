@@ -1,12 +1,15 @@
 // Dungeon Diver - Game State & Main Game Loop
 // Handles game states, update loop, and rendering
 
+use std::collections::HashMap;
+
 use macroquad::prelude::*;
 use macroquad::audio::{Sound, load_sound, play_sound, stop_sound, PlaySoundParams, set_sound_volume};
 use crate::config::*;
 use crate::input::*;
 use crate::rendering::Camera;
 use crate::entities::Player;
+use crate::world::tiled_visual::{TiledVisualMap, TiledVisualRaw};
 use crate::world::*;
 use crate::game::{GameSettings, ShutdownFlow};
 use crate::game::hit_vfx::{HitVfxAtlas, HitVfxInstance, HitVfxKind};
@@ -93,6 +96,10 @@ pub struct Game {
     hit_vfx_atlas: Option<HitVfxAtlas>,
     hit_vfx_instances: Vec<HitVfxInstance>,
     spike_timer: f32,
+    /// Tiled visual raw data for level 1. Populated by `load_tiled_textures`.
+    tiled_visual_raw_l1: Option<TiledVisualRaw>,
+    /// Textures loaded from tileset PNGs referenced by level 1 TMX.
+    tiled_textures: HashMap<String, Texture2D>,
     // --- Audio and Settings ---
     /// Looped on title / main menu (`intro_music.mp3`).
     pub intro_music: Option<Sound>,
@@ -160,6 +167,8 @@ impl Game {
             hit_vfx_atlas: None,
             hit_vfx_instances: Vec::new(),
             spike_timer: 0.0,
+            tiled_visual_raw_l1: None,
+            tiled_textures: HashMap::new(),
             intro_music: None,
             gameplay_music: None,
             sfx_coin: None,
@@ -196,6 +205,48 @@ impl Game {
         self.hit_vfx_atlas = HitVfxAtlas::load().await;
     }
 
+    /// Parse level1.tmx (already preloaded on WASM) to discover which tileset
+    /// PNGs it uses, then load those textures via macroquad. Must be called
+    /// after `preload_level_tmx_for_wasm` and before `start()`.
+    pub async fn load_tiled_textures(&mut self) {
+        let level = match crate::world::tmx_loader::load_level_from_tmx("assets/levels/level1.tmx") {
+            Ok(l) => l,
+            Err(e) => {
+                error!("load_tiled_textures: failed to parse level1.tmx — {e}");
+                return;
+            }
+        };
+
+        let raw = match level.tiled_visual_raw {
+            Some(r) => r,
+            None => {
+                error!("load_tiled_textures: no TiledVisualRaw in parsed level");
+                return;
+            }
+        };
+
+        let paths = raw.image_paths();
+        info!("Tiled: loading {} tileset PNG(s): {:?}", paths.len(), paths);
+
+        for path in &paths {
+            if self.tiled_textures.contains_key(path) {
+                continue;
+            }
+            match load_texture(path).await {
+                Ok(tex) => {
+                    tex.set_filter(FilterMode::Nearest);
+                    self.tiled_textures.insert(path.clone(), tex);
+                }
+                Err(e) => {
+                    error!("Tiled texture load failed for '{path}': {e}");
+                }
+            }
+        }
+
+        info!("Tiled textures loaded: {}/{}", self.tiled_textures.len(), paths.len());
+        self.tiled_visual_raw_l1 = Some(raw);
+    }
+
     pub async fn load_font(&mut self) {
         if let Ok(font_data) = load_file("assets/fonts/PixelifySans-Regular.ttf").await {
             self.font = load_ttf_font_from_bytes(&font_data).ok();
@@ -206,7 +257,9 @@ impl Game {
     }
 
     pub async fn load_audio(&mut self) {
-        self.intro_music = load_sound("assets/audio/intro_music.mp3").await.ok();
+        // quad-snd can panic on unsupported formats on some desktop targets
+        // (observed on macOS with MP3), so intro music uses a WAV copy.
+        self.intro_music = load_sound("assets/audio/intro_music.wav").await.ok();
         self.gameplay_music = load_sound("assets/audio/background_music.wav").await.ok();
         self.sfx_coin = load_sound("assets/audio/coin.wav").await.ok();
         self.sfx_blue_coin = load_sound("assets/audio/blue_coin.wav").await.ok();
@@ -272,9 +325,14 @@ impl Game {
             ItemType::Coin => self.play_sfx(&self.sfx_coin),
             ItemType::BlueCoin => self.play_sfx(&self.sfx_blue_coin),
             ItemType::CoinBag => self.play_sfx(&self.sfx_coin_bag),
-            ItemType::Potion | ItemType::BigPotion | ItemType::SmallPotion | ItemType::ShieldPotion | ItemType::BigShieldPotion => {
+            ItemType::Potion
+            | ItemType::BigPotion
+            | ItemType::SmallPotion
+            | ItemType::ShieldPotion
+            | ItemType::BigShieldPotion => {
                 self.play_sfx(&self.sfx_use_potion)
             }
+            ItemType::Key => self.play_sfx(&self.sfx_coin),
         }
     }
 
@@ -298,31 +356,31 @@ impl Game {
     }
 
     pub async fn load_title_background(&mut self) {
-        if let Ok(tex) = load_texture("assets/images/background.png").await {
+        if let Ok(tex) = load_texture("assets/images/backgrounds/background.png").await {
             tex.set_filter(FilterMode::Linear);
             self.title_background = Some(tex);
         }
-        if let Ok(tex) = load_texture("assets/images/focused.png").await {
+        if let Ok(tex) = load_texture("assets/images/ui/focused.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.title_btn_focused = Some(tex);
         }
-        if let Ok(tex) = load_texture("assets/images/unfocused.png").await {
+        if let Ok(tex) = load_texture("assets/images/ui/unfocused.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.title_btn_unfocused = Some(tex);
         }
-        if let Ok(tex) = load_texture("assets/images/clicked.png").await {
+        if let Ok(tex) = load_texture("assets/images/ui/clicked.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.title_btn_clicked = Some(tex);
         }
-        if let Ok(tex) = load_texture("assets/images/plate.png").await {
+        if let Ok(tex) = load_texture("assets/images/ui/plate.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.pause_plate = Some(tex);
         }
-        if let Ok(tex) = load_texture("assets/images/loadingBar.png").await {
+        if let Ok(tex) = load_texture("assets/images/ui/loadingBar.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.hud_loading_bar = Some(tex);
         }
-        if let Ok(tex) = load_texture("assets/images/winner_screen.png").await {
+        if let Ok(tex) = load_texture("assets/images/backgrounds/winner_screen.png").await {
             tex.set_filter(FilterMode::Linear);
             self.winner_screen = Some(tex);
         }
@@ -330,14 +388,12 @@ impl Game {
 
     /// Load player sprites (call before starting game)
     pub async fn load_player_sprites(&mut self) {
-        // Load Blue Knight idle sprite
-        if let Ok(tex) = load_texture("assets/dg_knight/Blue Knight idle Sprite-sheet 16x16.png").await {
+        if let Ok(tex) = load_texture("assets/sprites/player/bk-idle-spritesheet.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.player_idle_tex = Some(tex);
         }
 
-        // Load Blue Knight run sprite
-        if let Ok(tex) = load_texture("assets/dg_knight/Blue Knight run Sprite-sheet 16x17.png").await {
+        if let Ok(tex) = load_texture("assets/sprites/player/bk-run-spritesheet.png").await {
             tex.set_filter(FilterMode::Nearest);
             self.player_run_tex = Some(tex);
         }
@@ -351,6 +407,15 @@ impl Game {
         self.win_menu_selection = 0;
 
         self.level = Some(Level::load_level_1());
+
+        // Build TiledVisualMap for level 1 if textures were successfully loaded.
+        if let (Some(level), Some(raw)) = (self.level.as_mut(), self.tiled_visual_raw_l1.clone()) {
+            if !self.tiled_textures.is_empty() {
+                level.tiled_visual = Some(TiledVisualMap::build(raw, self.tiled_textures.clone()));
+                info!("TiledVisualMap attached to level 1");
+            }
+        }
+
         let level = self.level.as_ref().unwrap();
 
         // Create player at spawn point
@@ -562,6 +627,7 @@ impl Game {
         let mut pickup_sfx: Vec<ItemType> = Vec::new();
         let mut queued_vfx: Vec<(HitVfxKind, i32, i32, Direction)> = Vec::new();
         let mut combat_sfx_events: Vec<CombatSfxEvent> = Vec::new();
+        let mut should_open_gates = false;
         if let (Some(ref mut level), Some(ref mut player)) = (&mut self.level, &mut self.player) {
             player.update(dt, level, actions);
 
@@ -573,6 +639,7 @@ impl Game {
             if !player.has_key && level.chests.iter().any(|c| c.key_given) {
                 player.has_key = true;
                 level.door_unlocked = true;
+                level.open_all_gates();
             }
 
             // Check item collection
@@ -600,18 +667,29 @@ impl Game {
                                 self.run_shield_potions += 1;
                             }
                         }
+                        ItemType::Key => {
+                            player.has_key = true;
+                            level.door_unlocked = true;
+                            should_open_gates = true;
+                        }
                     }
                 }
             }
 
-            // Check vase breaking (player walks into vase)
-            for vase in &mut level.vases {
-                if !vase.broken && vase.grid_x == player.grid_x && vase.grid_y == player.grid_y {
-                    if let Some(item_type) = vase.break_vase() {
-                        // Spawn item from vase
-                        level.items.push(crate::world::Item::new(vase.grid_x, vase.grid_y, item_type));
-                    }
+            if should_open_gates {
+                level.open_all_gates();
+            }
+
+            // Floor buttons: opens portcullises only (does not grant exit key unless you add a key pickup).
+            let mut gate_from_button = false;
+            for btn in &mut level.buttons {
+                if !btn.triggered && btn.grid_x == player.grid_x && btn.grid_y == player.grid_y {
+                    btn.triggered = true;
+                    gate_from_button = true;
                 }
+            }
+            if gate_from_button {
+                level.open_all_gates();
             }
 
             // ═══════════════════════════════════════════════════════════════════════════════
@@ -658,7 +736,28 @@ impl Game {
                 }
 
                 if !hit_enemy {
-                    combat_sfx_events.push(CombatSfxEvent::PlayerSwingMiss);
+                    let mut broke_vase = false;
+                    for vase in &mut level.vases {
+                        if vase.broken || vase.grid_x != attack_x || vase.grid_y != attack_y {
+                            continue;
+                        }
+                        if vase.smash() {
+                            broke_vase = true;
+                            let n = macroquad::rand::gen_range(1, 6);
+                            for _ in 0..n {
+                                level.items.push(crate::world::Item::new(
+                                    attack_x,
+                                    attack_y,
+                                    crate::world::ItemType::Coin,
+                                ));
+                            }
+                            combat_sfx_events.push(CombatSfxEvent::PlayerSwingHit);
+                        }
+                        break;
+                    }
+                    if !broke_vase {
+                        combat_sfx_events.push(CombatSfxEvent::PlayerSwingMiss);
+                    }
                 }
             }
 
@@ -1013,10 +1112,25 @@ impl Game {
                 }
             }
 
-            // Draw player
+            // Tall Tiled sprites (door leaves, decor, etc.): Y-sort vs player — except the `columns`
+            // layer, which always draws under the player (16×48 column art). Bases north-west of the
+            // player draw before; south-east draw after for those layers.
             if let Some(ref player) = self.player {
+                let player_depth_x = (player.x / TILE_SIZE).floor() as i32;
+                let player_depth_y = (player.y / TILE_SIZE).floor() as i32;
+                level.draw_foreground_before_player(cam_x, cam_y, player_depth_x, player_depth_y);
                 player.draw(cam_x, cam_y);
+                level.draw_foreground_after_player(cam_x, cam_y, player_depth_x, player_depth_y);
+            } else {
+                // No player: draw every tall tile in the “before” bucket (sentinel sorts all bases south of it).
+                level.draw_foreground_before_player(cam_x, cam_y, i32::MAX, i32::MAX);
             }
+            // 16px sconce art deferred from `Level::draw` (same paths as `is_deferred_sconce_path`).
+            level.draw_tiled_sconce_overlay(cam_x, cam_y);
+            // Exit door: TMX keeps closed tiles; overlay open leaf when `door_unlocked` (key/chest).
+            level.draw_exit_door_unlock_overlay(cam_x, cam_y, self.items_atlas.as_ref());
+            // Marker / glow on top so it does not bleed through transparent door pixels from below.
+            level.draw_exit_tile_marker(cam_x, cam_y);
 
             if let Some(ref atlas) = self.hit_vfx_atlas {
                 for fx in &self.hit_vfx_instances {
@@ -1579,8 +1693,7 @@ impl Game {
 
         if let Some(ref level) = self.level {
             let (cam_x, cam_y) = self.camera.get_render_offset();
-            let door_x = level.exit_x as f32 * TILE_SIZE - cam_x;
-            let door_y = level.exit_y as f32 * TILE_SIZE - cam_y;
+            let (door_x, door_y, door_w, door_h) = level.exit_zone_screen_rect(cam_x, cam_y);
 
             // Pulse decreases as timer runs out.
             let t = (self.level_complete_timer / self.level_complete_duration).clamp(0.0, 1.0);
@@ -1590,16 +1703,16 @@ impl Game {
             draw_rectangle(
                 door_x - 4.0,
                 door_y - 4.0,
-                TILE_SIZE + 8.0,
-                TILE_SIZE + 8.0,
+                door_w + 8.0,
+                door_h + 8.0,
                 Color { r: 0.4, g: 0.8, b: 1.0, a: pulse },
             );
             // Inner accent
             draw_rectangle(
                 door_x,
                 door_y,
-                TILE_SIZE,
-                TILE_SIZE,
+                door_w,
+                door_h,
                 Color { r: LEVEL1_PALETTE.accent.r, g: LEVEL1_PALETTE.accent.g, b: LEVEL1_PALETTE.accent.b, a: pulse * 0.7 },
             );
         }

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 macroquad = { version = "0.4", features = ["audio"] }
+tiled = { version = "0.13", default-features = false }
 
 [profile.release]
 opt-level = "z"

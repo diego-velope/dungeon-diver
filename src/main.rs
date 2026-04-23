@@ -42,24 +42,31 @@ async fn main() {
     #[cfg(target_arch = "wasm32")]
     input::tv_input_manager::init_tv_input_manager();
 
+    // TMX is parsed with the `tiled` crate using std::fs on native; WASM has no filesystem, so we
+    // fetch these bytes up front (same paths as `dist/assets/...` after `build.sh`).
+    world::tmx_loader::preload_level_tmx_for_wasm().await;
+
     // Initialize game state
     let mut game = Game::new();
 
     splash_html::set_loading_progress(0.0);
     game.load_player_sprites().await;
-    splash_html::set_loading_progress(14.0);
+    splash_html::set_loading_progress(12.0);
     game.load_terrain_atlas().await;
-    splash_html::set_loading_progress(28.0);
+    splash_html::set_loading_progress(24.0);
     game.load_items_atlas().await;
-    splash_html::set_loading_progress(42.0);
+    splash_html::set_loading_progress(36.0);
     game.load_enemy_atlas().await;
-    splash_html::set_loading_progress(54.0);
+    splash_html::set_loading_progress(48.0);
     game.load_hit_vfx().await;
-    splash_html::set_loading_progress(64.0);
+    splash_html::set_loading_progress(56.0);
+    // Load Tiled tileset PNGs for level 1 (uses TMX already preloaded above).
+    game.load_tiled_textures().await;
+    splash_html::set_loading_progress(68.0);
     game.load_font().await;
-    splash_html::set_loading_progress(76.0);
+    splash_html::set_loading_progress(78.0);
     game.load_audio().await;
-    splash_html::set_loading_progress(88.0);
+    splash_html::set_loading_progress(90.0);
     game.load_title_background().await;
     splash_html::set_loading_progress(100.0);
     game.enter_title_music();

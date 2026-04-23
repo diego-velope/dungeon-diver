@@ -38,7 +38,7 @@ impl EnemyAtlas {
     async fn load_frame_set(prefix: &str) -> Option<Vec<Texture2D>> {
         let mut frames = Vec::new();
         for idx in 0..=3 {
-            let tex = load_texture(&format!("assets/enemies_zombies/{}_f{}.png", prefix, idx)).await.ok()?;
+            let tex = load_texture(&format!("assets/sprites/enemies/{}_f{}.png", prefix, idx)).await.ok()?;
             tex.set_filter(FilterMode::Nearest);
             frames.push(tex);
         }
@@ -46,10 +46,10 @@ impl EnemyAtlas {
     }
 
     pub async fn load() -> Option<Self> {
-        let idle = load_texture("assets/enemies_zombies/zombie_idle.png").await.ok()?;
-        let run = load_texture("assets/enemies_zombies/zombie_run.png").await.ok()?;
-        let hurt = load_texture("assets/enemies_zombies/zombie_hurt.png").await.ok()?;
-        let death = load_texture("assets/enemies_zombies/zombie_death.png").await.ok()?;
+        let idle = load_texture("assets/sprites/enemies/zombie_idle.png").await.ok()?;
+        let run = load_texture("assets/sprites/enemies/zombie_run.png").await.ok()?;
+        let hurt = load_texture("assets/sprites/enemies/zombie_hurt.png").await.ok()?;
+        let death = load_texture("assets/sprites/enemies/zombie_death.png").await.ok()?;
         idle.set_filter(FilterMode::Nearest);
         run.set_filter(FilterMode::Nearest);
         hurt.set_filter(FilterMode::Nearest);
