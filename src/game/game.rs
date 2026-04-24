@@ -215,7 +215,11 @@ impl Game {
     /// Must be called after `preload_level_tmx_for_wasm` and before `start()`.
     pub async fn load_tiled_textures(&mut self) {
         let mut paths: HashSet<String> = HashSet::new();
-        for tmx in ["assets/levels/level1.tmx", "assets/levels/level2.tmx"] {
+        for tmx in [
+            "assets/levels/level1.tmx",
+            "assets/levels/level2.tmx",
+            "assets/levels/level3.tmx",
+        ] {
             match crate::world::tmx_loader::load_level_from_tmx(tmx) {
                 Ok(level) => {
                     if let Some(raw) = level.tiled_visual_raw {

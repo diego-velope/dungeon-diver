@@ -18,7 +18,7 @@ use crate::world::{
 #[cfg(target_arch = "wasm32")]
 static WASM_LEVEL_TMX_RESOURCES: OnceLock<Arc<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
-/// XML files the `tiled` loader reads for level 1 (map → external TSX files).
+/// XML files the `tiled` loader reads for TMX levels (map → external TSX files).
 /// Must stay in sync with `assets/levels/level1.tmx` tileset sources.
 /// PNGs are NOT read during parse — they are loaded separately by macroquad.
 /// Used only on WASM (native uses std::fs directly).
@@ -26,6 +26,7 @@ static WASM_LEVEL_TMX_RESOURCES: OnceLock<Arc<HashMap<String, Vec<u8>>>> = OnceL
 const TMX_WASM_PRELOADS: &[&str] = &[
     "assets/levels/level1.tmx",
     "assets/levels/level2.tmx",
+    "assets/levels/level3.tmx",
     "assets/levels/dungeon_tileset_ii.tsx",
     "assets/levels/decoration.tsx",
     "assets/levels/columns.tsx",
@@ -523,5 +524,11 @@ mod tests {
         assert!(level.exit_w >= 1 && level.exit_h >= 1);
         assert!(level.door_x >= 0 && level.door_y >= 0, "door must be set");
         assert!(level.door_w >= 1 && level.door_h >= 1);
+    }
+
+    #[test]
+    fn parses_level3_tmx() {
+        let level = load_level_from_tmx("assets/levels/level3.tmx").expect("level3.tmx should parse");
+        assert_eq!((level.width, level.height), (16, 16));
     }
 }

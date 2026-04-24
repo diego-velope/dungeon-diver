@@ -444,28 +444,18 @@ impl Level {
         Self::load_level_2_tmx()
     }
 
+    pub fn load_level_3_tmx() -> Self {
+        match crate::world::tmx_loader::load_level_from_tmx("assets/levels/level3.tmx") {
+            Ok(level) => level,
+            Err(err) => {
+                error!("L3 TMX load failed: {}", err);
+                Self::level_tmx_unavailable_placeholder()
+            }
+        }
+    }
+
     pub fn load_level_3() -> Self {
-        let mut level = Self::new(LEVEL1_W, LEVEL1_H, LEVEL1_PALETTE);
-        let layout = [
-            "##-#-#-#-#-#-#-#-#-#-#-#-#-#-#",
-            "#.......BP...E..#",
-            "#.##-##-.#-#-#-#-#-#-.##",
-            "#.#Z#.........##",
-            "#.###.SP.......##",
-            "#.............#-#",
-            "#..##-#-#-#-#-......#",
-            "#..#Z.G...Z....#",
-            "#..#.......H...#",
-            "#..######......#",
-            "#..............#",
-            "#.##-#-#.........#",
-            "#.#..#.....Z...#",
-            "#.#-C.#-.....SP...#",
-            "#@.............#",
-            "################",
-        ];
-        level.parse_layout(&layout);
-        level
+        Self::load_level_3_tmx()
     }
 
     pub fn load_level_4() -> Self {
